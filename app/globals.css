@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --canvas: #ffffff;
+  --surface: #ffffff;
+  --ink: #18181b;
+  --muted: #71717a;
+  --line: #e4e4e7;
+  --blue: #6c5dd3;
+  --blue-dark: #5b4bc4;
+  --action: #050505;
+  --action-hover: #27272a;
+  --logo-blue: #0071c1;
+  --logo-blue-dark: #005b9e;
+  --mint: #e8f7ef;
+  --mint-ink: #18794e;
+  --amber: #fff7e5;
+  --amber-ink: #8a6113;
+  --danger: #b42318;
+  --sidebar: #05050b;
+  --panel-shadow: 0 10px 29px 0 rgba(68, 88, 144, 0.1);
+}
+
+html {
+  overflow-x: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: #cce7ef;
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+
