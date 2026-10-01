@@ -1,0 +1,148 @@
+import "server-only";
+
+import type { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import type { AttendanceAction } from "@/lib/attendance/validation";
+import { groupSessionsByEmployeeLocalDay } from "@/lib/attendance/history";
+import { getEmployeeLocalDayWindow } from "@/lib/attendance/timezone";
+
+export class AttendanceStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AttendanceStateError";
+  }
+}
+
+function requestedMode(action: AttendanceAction) {
+  return action.startsWith("WFH") ? "WFH" : "OFFICE";
+}
+
+export async function lockAttendanceEmployee(tx: Prisma.TransactionClient, employeeId: string) {
+  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${employeeId} FOR UPDATE`;
+}
+
+type AttendanceWriteDatabase = Pick<typeof prisma, "$transaction">;
+
+export async function applyAttendanceAction(
+  employeeId: string,
+  action: AttendanceAction,
+  database: AttendanceWriteDatabase = prisma,
+  now: Date = new Date(),
+) {
+  const mode = requestedMode(action);
+  const isStart = action === "IN" || action === "WFH_IN";
+
+  return database.$transaction(async (tx) => {
+    await lockAttendanceEmployee(tx, employeeId);
+
+    const employee = await tx.user.findUnique({
+      where: { id: employeeId },
+      select: { timeZone: true },
+    });
+    if (!employee) throw new AttendanceStateError("Employee account was not found.");
+
+    const activeSession = await tx.workSession.findFirst({
+      where: { record: { employeeId }, endAt: null },
+      orderBy: { startAt: "desc" },
+      select: { id: true, mode: true, startAt: true },
+    });
+
+    if (isStart) {
+      if (activeSession) {
+        throw new AttendanceStateError("End the active session before starting another.");
+      }
+
+      const { startAt, endAt } = getEmployeeLocalDayWindow(now, employee.timeZone);
+      const todaysSession = await tx.workSession.findFirst({
+        where: {
+          record: { employeeId },
+          OR: [
+            { startAt: { gte: startAt, lt: endAt } },
+            { endAt: { gte: startAt, lt: endAt } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (todaysSession) {
+        throw new AttendanceStateError("You have already completed attendance for your local day.");
+      }
+
+      const startedAt = now;
+      // Phase 1 creates one record per session; records do not yet represent attendance days.
+      const record = await tx.attendanceRecord.create({
+        data: {
+          employeeId,
+          sessions: { create: { mode, startAt: startedAt } },
+        },
+        include: { sessions: true },
+      });
+      return record.sessions[0];
+    }
+
+    if (!activeSession) {
+      throw new AttendanceStateError("There is no active session to end.");
+    }
+    if (activeSession.mode !== mode) {
+      throw new AttendanceStateError("The active session uses a different work mode.");
+    }
+
+    const endedAt = now;
+    if (!Number.isFinite(endedAt.getTime()) || endedAt < activeSession.startAt) {
+      throw new AttendanceStateError("The session cannot end before it started.");
+    }
+
+    return tx.workSession.update({
+      where: { id: activeSession.id },
+      data: { endAt: endedAt },
+    });
+  });
+}
+
+type EmployeeAttendanceContext = { id: string; timeZone: string };
+type AttendanceReadDatabase = Pick<typeof prisma, "workSession">;
+
+export async function getEmployeeAttendanceDashboard(
+  employee: EmployeeAttendanceContext,
+  now: Date = new Date(),
+  database: AttendanceReadDatabase = prisma,
+) {
+  const { date, startAt, endAt } = getEmployeeLocalDayWindow(now, employee.timeZone);
+  const employeeFilter = { record: { employeeId: employee.id } };
+  const [activeSession, sessions] = await Promise.all([
+    database.workSession.findFirst({
+      where: { ...employeeFilter, endAt: null },
+      orderBy: { startAt: "desc" },
+    }),
+    database.workSession.findMany({
+      where: {
+        ...employeeFilter,
+        OR: [
+          { startAt: { gte: startAt, lt: endAt } },
+          { endAt: { gte: startAt, lt: endAt } },
+        ],
+      },
+      orderBy: { startAt: "asc" },
+    }),
+  ]);
+
+  const grouped = groupSessionsByEmployeeLocalDay(sessions, employee.timeZone);
+  const completedSessionToday = sessions.some((session) => session.endAt && session.endAt >= startAt && session.endAt < endAt);
+  return {
+    date,
+    activeSession,
+    day: grouped.days[0] ?? { date, sessions: [], totalWorkedMs: 0 },
+    completedSessionToday,
+    invalidSessions: grouped.invalidSessions,
+  };
+}
+
+export async function getEmployeeAttendanceHistory(
+  employee: EmployeeAttendanceContext,
+  database: AttendanceReadDatabase = prisma,
+) {
+  const sessions = await database.workSession.findMany({
+    where: { record: { employeeId: employee.id } },
+    orderBy: { startAt: "desc" },
+  });
+  return groupSessionsByEmployeeLocalDay(sessions, employee.timeZone);
+}

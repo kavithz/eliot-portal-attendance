@@ -1,0 +1,101 @@
+import "server-only";
+
+import { SignJWT, jwtVerify } from "jose";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { findActiveSessionUser } from "@/lib/auth/session-user";
+
+const cookieName = "attendance_session";
+const sessionDurationSeconds = 60 * 60 * 24 * 7;
+
+function getSessionKey() {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("SESSION_SECRET must contain at least 32 characters.");
+  }
+  return new TextEncoder().encode(secret);
+}
+
+export class AuthenticationError extends Error {
+  constructor() {
+    super("Please sign in to continue.");
+    this.name = "AuthenticationError";
+  }
+}
+
+export class AuthorizationError extends Error {
+  constructor() {
+    super("You do not have permission to access this resource.");
+    this.name = "AuthorizationError";
+  }
+}
+
+export async function createSession(userId: string) {
+  const token = await new SignJWT({})
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(userId)
+    .setIssuer("attendance-system")
+    .setAudience("attendance-app")
+    .setIssuedAt()
+    .setExpirationTime(`${sessionDurationSeconds}s`)
+    .sign(getSessionKey());
+
+  const cookieStore = await cookies();
+  cookieStore.set(cookieName, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: sessionDurationSeconds,
+  });
+}
+
+export async function destroySession() {
+  const cookieStore = await cookies();
+  cookieStore.delete(cookieName);
+}
+
+export async function getCurrentUser() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(cookieName)?.value;
+  if (!token) return null;
+
+  let userId: string;
+  try {
+    const { payload } = await jwtVerify(token, getSessionKey(), {
+      issuer: "attendance-system",
+      audience: "attendance-app",
+      algorithms: ["HS256"],
+    });
+    if (!payload.sub) return null;
+    userId = payload.sub;
+  } catch {
+    return null;
+  }
+
+  return findActiveSessionUser(userId);
+}
+
+export async function requireUser() {
+  const user = await getCurrentUser();
+  if (!user) throw new AuthenticationError();
+  return user;
+}
+
+export async function requireAdmin() {
+  const user = await requireUser();
+  if (user.role !== "ADMIN") throw new AuthorizationError();
+  return user;
+}
+
+export async function requirePageUser() {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  return user;
+}
+
+export async function requirePageAdmin() {
+  const user = await requirePageUser();
+  if (user.role !== "ADMIN") redirect("/dashboard");
+  return user;
+}

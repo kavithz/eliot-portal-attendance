@@ -1,0 +1,98 @@
+import "server-only";
+
+import type { PrismaClient, Role } from "@prisma/client";
+import { fromZonedTime } from "date-fns-tz";
+import { prisma } from "@/lib/prisma";
+import { adminEmployeeSelect, AdminAttendanceAuthorizationError } from "@/lib/attendance/admin-service";
+import { adminAttendanceFilterSchema } from "@/lib/attendance/admin-validation";
+import { formatWorkedDuration, groupSessionsByEmployeeLocalDay } from "@/lib/attendance/history";
+import { getEmployeeLocalDayWindow } from "@/lib/attendance/timezone";
+
+type AdminActor = { role: Role } | null;
+type SummaryDatabase = Pick<PrismaClient, "user" | "workSession">;
+
+function assertAdmin(admin: AdminActor): asserts admin is { role: Role } {
+  if (!admin || admin.role !== "ADMIN") throw new AdminAttendanceAuthorizationError();
+}
+
+function nextLocalDay(date: string, timeZone: string) {
+  return getEmployeeLocalDayWindow(fromZonedTime(`${date}T12:00:00.000`, timeZone), timeZone).endAt;
+}
+
+export async function getAdminAttendanceSummary(
+  admin: AdminActor,
+  input: { date: unknown; employeeId?: string; mode?: "ALL" | "OFFICE" | "WFH" },
+  database: SummaryDatabase = prisma,
+) {
+  assertAdmin(admin);
+  const { from: date } = adminAttendanceFilterSchema.parse({ from: input.date, to: input.date });
+  const employeeId = input.employeeId?.trim() ?? "";
+  const mode = input.mode ?? "ALL";
+  if (!date) throw new Error("Select a report date.");
+
+  const employees = await database.user.findMany({
+    where: { role: "EMPLOYEE", isActive: true, ...(employeeId ? { id: employeeId } : {}) },
+    select: adminEmployeeSelect,
+    orderBy: { name: "asc" },
+  });
+  const employeeIds = employees.map((employee) => employee.id);
+  if (employeeIds.length === 0) {
+    return {
+      date,
+      employees: [],
+      metrics: { totalEmployees: 0, withAttendance: 0, withoutAttendance: 0, lateArrivals: 0, earlyDepartures: 0, completed: 0, activeNow: 0 },
+    };
+  }
+
+  const localRanges = employees.map((employee) => {
+    const { startAt } = getEmployeeLocalDayWindow(fromZonedTime(`${date}T12:00:00.000`, employee.timeZone), employee.timeZone);
+    const endAt = nextLocalDay(date, employee.timeZone);
+    return { record: { employeeId: employee.id }, startAt: { gte: startAt, lt: endAt } };
+  });
+  const modeFilter = mode === "ALL" ? {} : { mode };
+  const [daySessions, openSessions] = await Promise.all([
+    database.workSession.findMany({
+      where: { OR: localRanges, ...modeFilter },
+      include: { record: { select: { employee: { select: adminEmployeeSelect } } } },
+      orderBy: { startAt: "asc" },
+    }),
+    database.workSession.findMany({
+      where: { endAt: null, record: { employeeId: { in: employeeIds } }, ...modeFilter },
+      select: { mode: true, startAt: true, record: { select: { employeeId: true } } },
+    }),
+  ]);
+
+  const sessionsByEmployee = new Map<string, typeof daySessions>();
+  for (const session of daySessions) {
+    const id = session.record.employee.id;
+    const rows = sessionsByEmployee.get(id) ?? [];
+    rows.push(session);
+    sessionsByEmployee.set(id, rows);
+  }
+  const activeEmployeeIds = new Set(openSessions.map((session) => session.record.employeeId));
+  const summaries = employees.map((employee) => {
+    const grouped = groupSessionsByEmployeeLocalDay(sessionsByEmployee.get(employee.id) ?? [], employee.timeZone);
+    const day = grouped.days.find((entry) => entry.date === date) ?? { date, sessions: [], totalWorkedMs: 0 };
+    return {
+      employee,
+      day,
+      activeNow: activeEmployeeIds.has(employee.id),
+      completedWorkedTime: formatWorkedDuration(day.totalWorkedMs),
+    };
+  });
+
+  const withAttendance = summaries.filter(({ day }) => day.sessions.length > 0);
+  return {
+    date,
+    employees: summaries,
+    metrics: {
+      totalEmployees: summaries.length,
+      withAttendance: withAttendance.length,
+      withoutAttendance: summaries.length - withAttendance.length,
+      lateArrivals: summaries.filter(({ day }) => day.sessions.some(({ timing }) => timing?.arrival === "LATE")).length,
+      earlyDepartures: summaries.filter(({ day }) => day.sessions.some(({ timing }) => timing?.departure === "EARLY_DEPARTURE")).length,
+      completed: summaries.filter(({ day }) => day.sessions.some(({ status }) => status === "COMPLETED")).length,
+      activeNow: summaries.filter(({ activeNow }) => activeNow).length,
+    },
+  };
+}
