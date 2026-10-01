@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String                        @id @default(cuid())
+  name                String
+  email               String                        @unique
+  countryCode         String                        @db.VarChar(2)
+  timeZone            String
+  passwordHash        String
+  role                Role                          @default(EMPLOYEE)
+  isActive            Boolean                       @default(true)
+  employeeCode        String?                       @unique
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
+  settingsUpdated     AppSetting[]
+  auditReviews        AttendanceAuditLog[]          @relation("AttendanceAuditActor")
+  auditEntries        AttendanceAuditLog[]
+  correctionRequests  AttendanceCorrectionRequest[]
+  reviewedCorrections AttendanceCorrectionRequest[] @relation("AttendanceCorrectionReviewer")
+  records             AttendanceRecord[]
+  notifications       Notification[]
+
+  @@index([role])
+}
+
+model AttendanceRecord {
+  id         String        @id @default(cuid())
+  employeeId String
+  workDate   DateTime?     @db.Date
+  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime      @updatedAt @db.Timestamptz(3)
+  employee   User          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  sessions   WorkSession[]
+
+  @@index([employeeId, workDate])
+}
+
+model WorkSession {
+  id                 String                        @id @default(cuid())
+  recordId           String
+  mode               WorkMode
+  startAt            DateTime                      @db.Timestamptz(3)
+  endAt              DateTime?                     @db.Timestamptz(3)
+  createdAt          DateTime                      @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                      @updatedAt @db.Timestamptz(3)
+  auditLogs          AttendanceAuditLog[]
+  correctionRequests AttendanceCorrectionRequest[]
+  record             AttendanceRecord              @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@index([recordId, startAt])
+  @@index([endAt])
+}
+
+model AttendanceCorrectionRequest {
+  id               String                     @id @default(cuid())
+  employeeId       String
+  sessionId        String?
+  reason           String
+  status           AttendanceCorrectionStatus @default(PENDING)
+  originalMode     WorkMode?
+  requestedMode    WorkMode?
+  originalStartAt  DateTime?
+  originalEndAt    DateTime?
+  resolutionReason String?
+  decisionNote     String?
+  reviewedById     String?
+  requestedAt      DateTime                   @default(now())
+  reviewedAt       DateTime?
+  resolvedAt       DateTime?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  employee         User                       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  reviewedBy       User?                      @relation("AttendanceCorrectionReviewer", fields: [reviewedById], references: [id])
+  session          WorkSession?               @relation(fields: [sessionId], references: [id])
+
+  @@unique([employeeId, sessionId, status])
+  @@index([employeeId, status])
+  @@index([status, requestedAt])
+}
+
+model AttendanceAuditLog {
+  id                  String       @id @default(cuid())
+  employeeId          String
+  sessionId           String?
+  actorId             String?
+  actionType          String
+  previousValues      Json?
+  newValues           Json?
+  reason              String?
+  correctionRequestId String?
+  createdAt           DateTime     @default(now())
+  actor               User?        @relation("AttendanceAuditActor", fields: [actorId], references: [id])
+  employee            User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  session             WorkSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([employeeId, createdAt])
+  @@index([sessionId, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String    @default("INFO")
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model AppSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  category    String   @default("GENERAL")
+  description String?
+  isAdminOnly Boolean  @default(false)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  updatedBy   User?    @relation(fields: [updatedById], references: [id])
+
+  @@index([category])
+}
+
+enum Role {
+  EMPLOYEE
+  ADMIN
+}
+
+enum WorkMode {
+  OFFICE
+  WFH
+}
+
+enum AttendanceCorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
