@@ -97,7 +97,7 @@ The session module produces a clear configuration error for a missing/short sess
 ## Commits
 
 - `bc9ee18` — `configure prisma for neon` (pushed to `origin/main`).
-- The guide and this report are included in the subsequent `add deployment guide` commit; its hash is reported in the final Git summary.
+- `8c28c64` — `add deployment guide` (pushed to `origin/main`; includes this report).
 
 ## Manual Steps
 
