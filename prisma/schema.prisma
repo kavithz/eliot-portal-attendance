@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -80,28 +81,29 @@ model AttendanceCorrectionRequest {
   reviewedBy       User?                      @relation("AttendanceCorrectionReviewer", fields: [reviewedById], references: [id])
   session          WorkSession?               @relation(fields: [sessionId], references: [id])
 
-  @@unique([employeeId, sessionId, status])
   @@index([employeeId, status])
   @@index([status, requestedAt])
 }
 
 model AttendanceAuditLog {
   id                  String       @id @default(cuid())
-  employeeId          String
+  employeeId          String?
   sessionId           String?
   actorId             String?
   actionType          String
+  settingKey          String?
   previousValues      Json?
   newValues           Json?
   reason              String?
   correctionRequestId String?
   createdAt           DateTime     @default(now())
   actor               User?        @relation("AttendanceAuditActor", fields: [actorId], references: [id])
-  employee            User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee            User?        @relation(fields: [employeeId], references: [id], onDelete: SetNull)
   session             WorkSession? @relation(fields: [sessionId], references: [id])
 
   @@index([employeeId, createdAt])
   @@index([sessionId, createdAt])
+  @@index([settingKey, createdAt])
 }
 
 model Notification {
