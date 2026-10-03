@@ -20,12 +20,65 @@ export function isCountryCode(value: string) {
 
 const employeeFields = {
   name: z.string().trim().min(1, "Name is required.").max(120),
-  employeeCode: z.string().trim().min(1, "Employee code is required.").max(50),
   email: z.string().trim().email("Enter a valid email.").max(254).transform((value) => value.toLowerCase()),
   role: z.enum(["EMPLOYEE", "ADMIN"]),
   countryCode: z.string().trim().toUpperCase().refine(isCountryCode, "Enter a valid two-letter country code."),
   timeZone: z.string().trim().refine(isIanaTimeZone, "Choose a valid IANA timezone."),
 };
+
+function optionalNullableText(maxLength: number) {
+  return z.preprocess(
+    (value) => value === undefined ? undefined : value === null ? null : value,
+    z.string().trim().max(maxLength).nullable().transform((value) => value || null),
+  ).optional();
+}
+
+const employeeIdentityFields = {
+  nic: optionalNullableText(120),
+  epfId: optionalNullableText(120),
+  etfId: optionalNullableText(120),
+};
+
+const profileDateField = z.preprocess(
+  (value) => value === undefined ? undefined : value === null || value === "" ? null : value,
+  z.union([
+    z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+      const date = new Date(`${value}T00:00:00.000Z`);
+      return Number.isFinite(date.getTime())
+        && date.toISOString().slice(0, 10) === value
+        && value <= new Date().toISOString().slice(0, 10);
+    }, "Enter a valid date."),
+    z.null(),
+  ]),
+).transform((value) => value === null ? null : new Date(`${value}T00:00:00.000Z`)).optional();
+
+export const adminEmployeeProfilePatchSchema = z.object({
+  permanentAddress: optionalNullableText(2000),
+  currentAddress: optionalNullableText(2000),
+  emergencyContactName: optionalNullableText(120),
+  emergencyContactId: optionalNullableText(120),
+  emergencyContactAddress: optionalNullableText(2000),
+  emergencyContactPhone: optionalNullableText(64),
+  emergencyContactRelationship: optionalNullableText(100),
+  contactNumber: optionalNullableText(64),
+  email: z.preprocess(
+    (value) => value === undefined ? undefined : value === null ? null : typeof value === "string" && value.trim() === "" ? null : value,
+    z.string().trim().email("Enter a valid profile contact email.").max(254).transform((value) => value.toLowerCase()).nullable(),
+  ).optional(),
+  linkedInId: optionalNullableText(512),
+  dateOfBirth: profileDateField,
+  maritalStatus: optionalNullableText(50),
+  spouseName: optionalNullableText(120),
+  spouseId: optionalNullableText(120),
+  motherName: optionalNullableText(120),
+  motherId: optionalNullableText(120),
+  motherContactNumber: optionalNullableText(64),
+  fatherName: optionalNullableText(120),
+  fatherId: optionalNullableText(120),
+  fatherContactNumber: optionalNullableText(64),
+});
+
+export type AdminEmployeeProfilePatch = z.infer<typeof adminEmployeeProfilePatchSchema>;
 
 function validateLocation(countryCode: string, timeZone: string, context: z.RefinementCtx) {
   const requiredTimeZone = countryTimeZones[countryCode];
@@ -40,15 +93,20 @@ function validateLocation(countryCode: string, timeZone: string, context: z.Refi
 
 export const createEmployeeSchema = z.object({
   ...employeeFields,
+  employeeCode: z.string().trim().min(1, "Employee ID is required.").max(50),
+  ...employeeIdentityFields,
   password: z.string().min(1, "An initial password is required.").refine(passwordWithinBcryptLimit, "Password must not exceed 72 UTF-8 bytes."),
 }).superRefine(({ countryCode, timeZone }, context) => validateLocation(countryCode, timeZone, context));
 
 export const updateEmployeeSchema = z.object({
   ...employeeFields,
+  employeeCode: optionalNullableText(50),
+  ...employeeIdentityFields,
   password: z.preprocess(
     (value) => value === "" ? undefined : value,
     z.string().refine(passwordWithinBcryptLimit, "Password must not exceed 72 UTF-8 bytes.").optional(),
   ),
+  profile: adminEmployeeProfilePatchSchema.optional(),
 }).superRefine(({ countryCode, timeZone }, context) => validateLocation(countryCode, timeZone, context));
 
 export type CreateEmployeeInput = z.infer<typeof createEmployeeSchema>;

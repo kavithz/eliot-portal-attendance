@@ -14,6 +14,7 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ e
   } catch {
     notFound();
   }
+  if (!employee.user) notFound();
 
   return (
     <div className="space-y-6">
@@ -22,7 +23,19 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ e
         <p className="mt-5 text-sm font-medium text-[var(--blue)]">Administration</p>
         <h1 className="mt-1 text-2xl font-semibold sm:text-[28px]">Edit employee</h1>
       </div>
-      <EmployeeForm employee={employee} />
+      <EmployeeForm employee={{
+        id: employee.user.id,
+        name: employee.name,
+        employeeCode: employee.employeeId,
+        nic: employee.nic,
+        epfId: employee.epfId,
+        etfId: employee.etfId,
+        email: employee.user.email,
+        role: employee.user.role,
+        countryCode: employee.user.countryCode,
+        timeZone: employee.user.timeZone,
+        profile: employee.profile,
+      }} />
     </div>
   );
 }

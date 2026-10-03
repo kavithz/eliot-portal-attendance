@@ -7,9 +7,15 @@ import {
   createEmployee,
   EmployeeAccessError,
   EmployeeDuplicateError,
+  EmployeeNotFoundError,
+  changedEmployeeFieldNames,
+  employeeAuditMetadata,
+  getEmployee,
+  listEmployees,
   publicEmployeeSelect,
   setEmployeeActive,
   updateEmployee,
+  writeEmployeeAuditEvent,
 } from "@/lib/employees/service";
 import { createEmployeeSchema } from "@/lib/employees/validation";
 
@@ -65,12 +71,26 @@ describe("employee management", () => {
     assert.deepEqual(stub.getCreateData()?.employee, {
       create: { name: employeeInput.name, employeeId: employeeInput.employeeCode, profileOnboardingRequired: true },
     });
+    assert.equal("nic" in (stub.getCreateData() ?? {}), false);
+    assert.equal("epfId" in (stub.getCreateData() ?? {}), false);
+    assert.equal("etfId" in (stub.getCreateData() ?? {}), false);
   });
 
   it("rejects a non-admin before attempting to create an employee", async () => {
     const stub = createDatabaseStub();
     await assert.rejects(createEmployee({ role: Role.EMPLOYEE }, employeeInput, stub.database), EmployeeAccessError);
     assert.equal(stub.getCreateData(), undefined);
+  });
+
+  it("rejects non-admin employee/profile updates before attempting a database write", async () => {
+    const stub = createDatabaseStub();
+
+    await assert.rejects(updateEmployee({ role: Role.EMPLOYEE }, "employee-1", {
+      ...employeeInput,
+      password: "",
+      profile: { email: "contact@example.com" },
+    }, stub.database), EmployeeAccessError);
+    assert.equal(stub.getUpdateData(), undefined);
   });
 
   it("rejects an invalid IANA timezone", () => {
@@ -85,7 +105,7 @@ describe("employee management", () => {
   });
 
   it("translates duplicate email and employee code constraints", async () => {
-    for (const target of ["email", "employeeCode"]) {
+    for (const target of ["email", "employeeCode", "employeeId", "nic"]) {
       const database = {
         user: {
           create: async () => {
@@ -125,7 +145,184 @@ describe("employee management", () => {
     });
   });
 
+  it("persists NIC and optional EPF/ETF values separately on Employee", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(admin, { ...employeeInput, nic: "NIC-123", epfId: "", etfId: "ETF-456" }, stub.database);
+
+    assert.deepEqual(stub.getCreateData()?.employee, {
+      create: {
+        name: employeeInput.name,
+        employeeId: employeeInput.employeeCode,
+        nic: "NIC-123",
+        epfId: null,
+        etfId: "ETF-456",
+        profileOnboardingRequired: true,
+      },
+    });
+  });
+
+  it("updates only submitted EmployeeProfile fields and does not mass-assign client IDs", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(admin, employeeInput, stub.database);
+
+    await updateEmployee(admin, "employee-1", {
+      ...employeeInput,
+      password: "",
+      profile: { email: "contact@example.com", employeeRecordId: "other-employee", userId: "other-user" },
+    }, stub.database);
+
+    const employeeUpdate = (stub.getUpdateData()?.employee as { upsert: { update: Record<string, unknown> } }).upsert.update;
+    assert.deepEqual(employeeUpdate.profile, {
+      upsert: {
+        create: { email: "contact@example.com" },
+        update: { email: "contact@example.com" },
+      },
+    });
+    assert.equal("employeeRecordId" in employeeUpdate, false);
+    assert.equal("userId" in employeeUpdate, false);
+    assert.equal(stub.getUpdateData()?.email, employeeInput.email);
+  });
+
+  it("rejects invalid optional identity/profile fields on the server", async () => {
+    const stub = createDatabaseStub();
+    await assert.rejects(createEmployee(admin, { ...employeeInput, nic: "x".repeat(121) }, stub.database), { name: "ZodError" });
+    await assert.rejects(updateEmployee(admin, "employee-1", {
+      ...employeeInput,
+      password: "",
+      profile: { email: "not-an-email" },
+    }, stub.database), { name: "ZodError" });
+    assert.equal(stub.getCreateData(), undefined);
+    assert.equal(stub.getUpdateData(), undefined);
+  });
+
+  it("translates duplicate Employee ID and NIC conflicts during update", async () => {
+    for (const target of ["employeeId", "nic"]) {
+      const database = {
+        user: {
+          update: async () => { throw { code: "P2002", meta: { target: [target] } }; },
+        },
+      } as never;
+      await assert.rejects(updateEmployee(admin, "user-1", {
+        ...employeeInput,
+        password: "",
+        nic: "NIC-123",
+      }, database), (error: unknown) => {
+        assert.ok(error instanceof EmployeeDuplicateError);
+        assert.equal(error.field, target);
+        return true;
+      });
+    }
+  });
+
   it("uses a public select that never includes the password hash", () => {
     assert.equal("passwordHash" in publicEmployeeSelect, false);
+  });
+
+  it("searches by Employee name, Employee ID, or NIC with server-side pagination", async () => {
+    let findArgs: Record<string, unknown> | undefined;
+    let countWhere: Record<string, unknown> | undefined;
+    const database = {
+      employee: {
+        findMany: async (args: Record<string, unknown>) => { findArgs = args; return []; },
+        count: async ({ where }: { where: Record<string, unknown> }) => { countWhere = where; return 41; },
+      },
+    } as never;
+
+    const result = await listEmployees(admin, { query: "nic-77", page: 3, pageSize: 10 }, database);
+
+    assert.equal(result.total, 41);
+    assert.equal(result.page, 3);
+    assert.equal(result.pageSize, 10);
+    assert.equal(result.pageCount, 5);
+    assert.deepEqual(findArgs?.where, {
+      OR: [
+        { name: { contains: "nic-77", mode: "insensitive" } },
+        { employeeId: { contains: "nic-77", mode: "insensitive" } },
+        { nic: { contains: "nic-77", mode: "insensitive" } },
+      ],
+    });
+    assert.equal(findArgs?.skip, 20);
+    assert.equal(findArgs?.take, 10);
+    assert.deepEqual(countWhere, findArgs?.where);
+  });
+
+  it("returns an explicit empty result and rejects unauthorized list access", async () => {
+    const database = {
+      employee: {
+        findMany: async () => [],
+        count: async () => 0,
+      },
+    } as never;
+
+    const result = await listEmployees(admin, { query: "absent" }, database);
+    assert.deepEqual(result.employees, []);
+    assert.equal(result.total, 0);
+    await assert.rejects(listEmployees({ role: Role.EMPLOYEE }, {}, database), EmployeeAccessError);
+  });
+
+  it("retrieves the Employee/Profile/User association and handles missing or unauthorized detail access", async () => {
+    let receivedWhere: Record<string, unknown> | undefined;
+    const employeeRow = {
+      id: "employee-record-1",
+      name: "Ravi Employee",
+      employeeId: "EMP-1001",
+      nic: "NIC-1001",
+      epfId: null,
+      etfId: null,
+      userId: "user-1",
+      profileCompletedAt: null,
+      profileOnboardingRequired: true,
+      user: { id: "user-1", email: "login@example.com", role: Role.EMPLOYEE, isActive: true, countryCode: "LK", timeZone: "Asia/Colombo" },
+      profile: { email: "contact@example.com", permanentAddress: null },
+    };
+    const database = {
+      employee: {
+        findFirst: async ({ where }: { where: Record<string, unknown> }) => { receivedWhere = where; return employeeRow; },
+      },
+    } as never;
+
+    const employee = await getEmployee(admin, "user-1", database);
+    assert.equal(employee.user?.id, "user-1");
+    assert.equal(employee.profile?.email, "contact@example.com");
+    assert.deepEqual(receivedWhere, { OR: [{ userId: "user-1" }, { id: "user-1" }] });
+    assert.equal("passwordHash" in (employee.user ?? {}), false);
+    await assert.rejects(getEmployee(admin, "missing", { employee: { findFirst: async () => null } } as never), EmployeeNotFoundError);
+    await assert.rejects(getEmployee({ role: Role.EMPLOYEE }, "user-1", database), EmployeeAccessError);
+  });
+
+  it("keeps audit payloads to changed field names rather than personal values", () => {
+    const changedFields = changedEmployeeFieldNames(
+      { name: "Before", nic: "SECRET-NIC", email: "before@example.com" },
+      { name: "After", nic: "SECRET-NIC", email: "after@example.com" },
+    );
+    const metadata = employeeAuditMetadata(changedFields);
+
+    assert.deepEqual(changedFields, ["email", "name"]);
+    assert.deepEqual(metadata, { changedFields: ["email", "name"] });
+    assert.equal(JSON.stringify(metadata).includes("SECRET-NIC"), false);
+    assert.equal(JSON.stringify(metadata).includes("after@example.com"), false);
+  });
+
+  it("writes safe employee create/update audit events with actor, subject, and field names only", async () => {
+    const entries: Array<Record<string, unknown>> = [];
+    const database = {
+      attendanceAuditLog: {
+        create: async ({ data }: { data: Record<string, unknown> }) => { entries.push(data); return { id: "audit-1" }; },
+      },
+    } as never;
+
+    await writeEmployeeAuditEvent(database, {
+      employeeId: "user-1",
+      actorId: "admin-1",
+      actionType: "EMPLOYEE_UPDATED",
+      changedFields: ["nic", "profile.permanentAddress"],
+    });
+
+    assert.equal(entries[0].employeeId, "user-1");
+    assert.equal(entries[0].actorId, "admin-1");
+    assert.equal(entries[0].actionType, "EMPLOYEE_UPDATED");
+    assert.deepEqual(entries[0].previousValues, { changedFields: ["nic", "profile.permanentAddress"] });
+    assert.deepEqual(entries[0].newValues, { changedFields: ["nic", "profile.permanentAddress"] });
+    assert.equal(JSON.stringify(entries).includes("NIC-SECRET-VALUE"), false);
   });
 });

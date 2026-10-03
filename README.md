@@ -33,3 +33,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel and Neon setup, environment va
 - Admin attendance review, corrections, employee management, and reports operate on existing attendance data. Leave, holidays, payroll, and overtime are not configured.
 - The Employee foundation is linked to User through a unique optional User ID; attendance continues to reference User.id. Existing User.name and User.employeeCode remain for Phase 1 session, employee-admin, and attendance-report compatibility. The employee create/update service writes both copies together; future profile/read paths should move to Employee before either User field is removed.
 - Profile completion is required only when `Employee.profileOnboardingRequired` is true. Existing records default to false during migration and receive no fabricated profile data; newly created employee accounts are explicitly flagged for completion.
+
+## Admin employee management
+
+Administrators can search and page through Employee records, inspect linked profile information, and update employee identity/statutory IDs and profile fields. Admin routes and actions require the existing `ADMIN` role. Login email remains on `User`; profile contact email remains on `EmployeeProfile`. Attendance continues to reference `User.id`, and audit events record changed field names without storing personal values. This increment adds no migration; the existing Employee and EmployeeProfile migrations must already be applied for these screens to work.
