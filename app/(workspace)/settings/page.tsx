@@ -1,4 +1,5 @@
 import { requirePageUser } from "@/lib/auth/session";
+import { ChangePasswordForm } from "@/components/change-password-form";
 
 export default async function EmployeeSettingsPage() {
   const user = await requirePageUser();
@@ -32,6 +33,12 @@ export default async function EmployeeSettingsPage() {
           </dl>
         </section>
       </div>
+
+      <section className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-sm">
+        <h2 className="text-base font-semibold">Change password</h2>
+        <p className="mt-1 text-xs text-[var(--muted)]">Changing your password signs out your other active sessions.</p>
+        <ChangePasswordForm />
+      </section>
     </div>
   );
 }

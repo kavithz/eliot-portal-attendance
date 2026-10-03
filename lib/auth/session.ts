@@ -3,6 +3,7 @@ import "server-only";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { prisma } from "@/lib/prisma";
 import { findActiveSessionUser } from "@/lib/auth/session-user";
 
 const cookieName = "attendance_session";
@@ -31,7 +32,13 @@ export class AuthorizationError extends Error {
 }
 
 export async function createSession(userId: string) {
-  const token = await new SignJWT({})
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { sessionVersion: true },
+  });
+  if (!user) throw new AuthenticationError();
+
+  const token = await new SignJWT({ sessionVersion: user.sessionVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setIssuer("attendance-system")
@@ -61,6 +68,7 @@ export async function getCurrentUser() {
   if (!token) return null;
 
   let userId: string;
+  let sessionVersion: number;
   try {
     const { payload } = await jwtVerify(token, getSessionKey(), {
       issuer: "attendance-system",
@@ -69,11 +77,14 @@ export async function getCurrentUser() {
     });
     if (!payload.sub) return null;
     userId = payload.sub;
+    const versionClaim = (payload as typeof payload & { sessionVersion?: unknown }).sessionVersion ?? 0;
+    if (typeof versionClaim !== "number" || !Number.isSafeInteger(versionClaim) || versionClaim < 0) return null;
+    sessionVersion = versionClaim;
   } catch {
     return null;
   }
 
-  return findActiveSessionUser(userId);
+  return findActiveSessionUser(userId, undefined, sessionVersion);
 }
 
 export async function requireUser() {

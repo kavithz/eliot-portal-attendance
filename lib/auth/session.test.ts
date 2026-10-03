@@ -10,6 +10,7 @@ function sessionUser(isActive: boolean) {
     email: "employee@example.invalid",
     role: Role.EMPLOYEE,
     isActive,
+    sessionVersion: 0,
     employeeCode: "EMP-1",
     countryCode: "LK",
     timeZone: "Asia/Colombo",
@@ -32,7 +33,19 @@ describe("authenticated session user lookup", () => {
 
     assert.equal(user?.email, "employee@example.invalid");
     assert.equal("passwordHash" in (selected ?? {}), false);
+    assert.equal("sessionVersion" in (user ?? {}), false);
     assert.equal("passwordHash" in (user ?? {}), false);
+  });
+
+  it("rejects sessions issued before the password version changed", async () => {
+    const database = {
+      user: {
+        findUnique: async () => ({ ...sessionUser(true), sessionVersion: 1 }),
+      },
+    } as never;
+
+    assert.equal(await findActiveSessionUser("employee-1", database, 0), null);
+    assert.equal((await findActiveSessionUser("employee-1", database, 1))?.id, "employee-1");
   });
 
   it("keeps inactive accounts out of sessions", async () => {
