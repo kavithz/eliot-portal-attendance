@@ -9,6 +9,7 @@ import {
   EmployeeDuplicateError,
   publicEmployeeSelect,
   setEmployeeActive,
+  updateEmployee,
 } from "@/lib/employees/service";
 import { createEmployeeSchema } from "@/lib/employees/validation";
 
@@ -27,6 +28,7 @@ function createDatabaseStub() {
   let storedEmployee: Record<string, unknown> | undefined;
   let createData: Record<string, unknown> | undefined;
   let createSelect: Record<string, unknown> | undefined;
+  let updateData: Record<string, unknown> | undefined;
   const user = {
     create: async ({ data, select }: { data: Record<string, unknown>; select: Record<string, unknown> }) => {
       createData = data;
@@ -35,6 +37,7 @@ function createDatabaseStub() {
       return Object.fromEntries(Object.keys(select).map((key) => [key, storedEmployee?.[key]]));
     },
     update: async ({ data, select }: { data: Record<string, unknown>; select: Record<string, unknown> }) => {
+      updateData = data;
       storedEmployee = { ...storedEmployee, ...data, updatedAt: new Date() };
       return Object.fromEntries(Object.keys(select).map((key) => [key, storedEmployee?.[key]]));
     },
@@ -44,6 +47,7 @@ function createDatabaseStub() {
     database: { user } as never,
     getCreateData: () => createData,
     getCreateSelect: () => createSelect,
+    getUpdateData: () => updateData,
   };
 }
 
@@ -58,6 +62,9 @@ describe("employee management", () => {
     assert.equal("passwordHash" in (stub.getCreateSelect() ?? {}), false);
     assert.notEqual(stub.getCreateData()?.passwordHash, employeeInput.password);
     assert.equal(await verifyPassword(employeeInput.password, String(stub.getCreateData()?.passwordHash)), true);
+    assert.deepEqual(stub.getCreateData()?.employee, {
+      create: { name: employeeInput.name, employeeId: employeeInput.employeeCode },
+    });
   });
 
   it("rejects a non-admin before attempting to create an employee", async () => {
@@ -102,6 +109,20 @@ describe("employee management", () => {
     assert.equal(updated.isActive, false);
     assert.equal(accountIsActive(updated), false);
     assert.equal("passwordHash" in updated, false);
+  });
+
+  it("keeps Employee name and ID synchronized with the legacy User fields on update", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(admin, employeeInput, stub.database);
+
+    await updateEmployee(admin, "employee-1", { ...employeeInput, name: "Updated Employee", employeeCode: "EMP-1002", password: "" }, stub.database);
+
+    assert.deepEqual(stub.getUpdateData()?.employee, {
+      upsert: {
+        create: { name: "Updated Employee", employeeId: "EMP-1002" },
+        update: { name: "Updated Employee", employeeId: "EMP-1002" },
+      },
+    });
   });
 
   it("uses a public select that never includes the password hash", () => {

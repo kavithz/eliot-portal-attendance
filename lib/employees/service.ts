@@ -89,7 +89,13 @@ export async function createEmployee(admin: EmployeeAdmin, input: unknown, datab
   const passwordHash = await hashPassword(password);
 
   return withDuplicateTranslation(() => database.user.create({
-    data: { ...employeeFields, passwordHash },
+    data: {
+      ...employeeFields,
+      passwordHash,
+      employee: {
+        create: { name: employeeFields.name, employeeId: employeeFields.employeeCode },
+      },
+    },
     select: publicEmployeeSelect,
   }));
 }
@@ -102,7 +108,16 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
 
   return withDuplicateTranslation(() => database.user.update({
     where: { id: employeeId },
-    data: { ...employeeFields, ...(passwordHash ? { passwordHash } : {}) },
+    data: {
+      ...employeeFields,
+      ...(passwordHash ? { passwordHash } : {}),
+      employee: {
+        upsert: {
+          create: { name: employeeFields.name, employeeId: employeeFields.employeeCode },
+          update: { name: employeeFields.name, employeeId: employeeFields.employeeCode },
+        },
+      },
+    },
     select: publicEmployeeSelect,
   }));
 }

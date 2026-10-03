@@ -31,3 +31,4 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel and Neon setup, environment va
 - The existing schedule is 08:30–17:30 employee-local time and is shared by Office and WFH sessions.
 - Each session receives its own attendance record. Its date-only `workDate` remains unset; the schema intentionally has no one-record-per-day constraint.
 - Admin attendance review, corrections, employee management, and reports operate on existing attendance data. Leave, holidays, payroll, and overtime are not configured.
+- The Employee foundation is linked to User through a unique optional User ID; attendance continues to reference User.id. Existing User.name and User.employeeCode remain for Phase 1 session, employee-admin, and attendance-report compatibility. The employee create/update service writes both copies together; future profile/read paths should move to Employee before either User field is removed.
