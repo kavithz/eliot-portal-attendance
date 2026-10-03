@@ -146,9 +146,38 @@ model Employee {
   etfId              String?
   userId             String?   @unique
   profileCompletedAt DateTime? @db.Timestamptz(3)
+  profileOnboardingRequired Boolean @default(false)
   createdAt          DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
   user               User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  profile            EmployeeProfile?
+}
+
+model EmployeeProfile {
+  employeeRecordId              String    @id
+  permanentAddress              String?   @db.Text
+  currentAddress                String?   @db.Text
+  emergencyContactName          String?   @db.VarChar(120)
+  emergencyContactId            String?   @db.VarChar(120)
+  emergencyContactAddress       String?   @db.Text
+  emergencyContactPhone         String?   @db.VarChar(64)
+  emergencyContactRelationship  String?   @db.VarChar(100)
+  contactNumber                 String?   @db.VarChar(64)
+  email                         String?   @db.VarChar(254)
+  linkedInId                    String?   @db.VarChar(512)
+  dateOfBirth                   DateTime? @db.Date
+  maritalStatus                 String?   @db.VarChar(50)
+  spouseName                    String?   @db.VarChar(120)
+  spouseId                      String?   @db.VarChar(120)
+  motherName                    String?   @db.VarChar(120)
+  motherId                      String?   @db.VarChar(120)
+  motherContactNumber           String?   @db.VarChar(64)
+  fatherName                    String?   @db.VarChar(120)
+  fatherId                      String?   @db.VarChar(120)
+  fatherContactNumber           String?   @db.VarChar(64)
+  createdAt                     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime  @updatedAt @db.Timestamptz(3)
+  employee                      Employee  @relation(fields: [employeeRecordId], references: [id], onDelete: Cascade)
 }
 
 model PasswordResetToken {

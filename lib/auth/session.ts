@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { findActiveSessionUser } from "@/lib/auth/session-user";
+import { getEmployeeProfileOnboardingStatus } from "@/lib/employees/profile-service";
 
 const cookieName = "attendance_session";
 const sessionDurationSeconds = 60 * 60 * 24 * 7;
@@ -28,6 +29,13 @@ export class AuthorizationError extends Error {
   constructor() {
     super("You do not have permission to access this resource.");
     this.name = "AuthorizationError";
+  }
+}
+
+export class ProfileCompletionRequiredError extends Error {
+  constructor() {
+    super("Complete your employee profile before continuing.");
+    this.name = "ProfileCompletionRequiredError";
   }
 }
 
@@ -90,6 +98,9 @@ export async function getCurrentUser() {
 export async function requireUser() {
   const user = await getCurrentUser();
   if (!user) throw new AuthenticationError();
+  if (user.role === "EMPLOYEE" && (await getEmployeeProfileOnboardingStatus(user.id)).required) {
+    throw new ProfileCompletionRequiredError();
+  }
   return user;
 }
 
@@ -102,6 +113,9 @@ export async function requireAdmin() {
 export async function requirePageUser() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  if (user.role === "EMPLOYEE" && (await getEmployeeProfileOnboardingStatus(user.id)).required) {
+    redirect("/complete-profile");
+  }
   return user;
 }
 

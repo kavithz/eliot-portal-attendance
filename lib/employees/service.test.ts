@@ -63,7 +63,7 @@ describe("employee management", () => {
     assert.notEqual(stub.getCreateData()?.passwordHash, employeeInput.password);
     assert.equal(await verifyPassword(employeeInput.password, String(stub.getCreateData()?.passwordHash)), true);
     assert.deepEqual(stub.getCreateData()?.employee, {
-      create: { name: employeeInput.name, employeeId: employeeInput.employeeCode },
+      create: { name: employeeInput.name, employeeId: employeeInput.employeeCode, profileOnboardingRequired: true },
     });
   });
 
@@ -119,7 +119,7 @@ describe("employee management", () => {
 
     assert.deepEqual(stub.getUpdateData()?.employee, {
       upsert: {
-        create: { name: "Updated Employee", employeeId: "EMP-1002" },
+        create: { name: "Updated Employee", employeeId: "EMP-1002", profileOnboardingRequired: false },
         update: { name: "Updated Employee", employeeId: "EMP-1002" },
       },
     });

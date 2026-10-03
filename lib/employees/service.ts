@@ -93,7 +93,11 @@ export async function createEmployee(admin: EmployeeAdmin, input: unknown, datab
       ...employeeFields,
       passwordHash,
       employee: {
-        create: { name: employeeFields.name, employeeId: employeeFields.employeeCode },
+        create: {
+          name: employeeFields.name,
+          employeeId: employeeFields.employeeCode,
+          profileOnboardingRequired: employeeFields.role === "EMPLOYEE",
+        },
       },
     },
     select: publicEmployeeSelect,
@@ -113,7 +117,11 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
       ...(passwordHash ? { passwordHash } : {}),
       employee: {
         upsert: {
-          create: { name: employeeFields.name, employeeId: employeeFields.employeeCode },
+          create: {
+            name: employeeFields.name,
+            employeeId: employeeFields.employeeCode,
+            profileOnboardingRequired: false,
+          },
           update: { name: employeeFields.name, employeeId: employeeFields.employeeCode },
         },
       },

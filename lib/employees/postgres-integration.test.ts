@@ -57,6 +57,15 @@ it("enforces the Employee foundation constraints and preserves User attendance/a
       },
     });
 
+    const employeeProfile = await prisma.employeeProfile.create({
+      data: { employeeRecordId: employee.id },
+      select: { employeeRecordId: true },
+    });
+    assert.equal(employeeProfile.employeeRecordId, employee.id);
+    await assert.rejects(prisma.employeeProfile.create({
+      data: { employeeRecordId: employee.id },
+    }), { code: "P2002" });
+
     await assert.rejects(prisma.employee.create({
       data: { name: "Duplicate employee ID", employeeId: employee.employeeId },
     }), { code: "P2002" });
