@@ -4,15 +4,19 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { hashPassword, passwordWithinBcryptLimit, verifyPassword } from "@/lib/auth/password";
 
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1).max(256),
+const newPasswordFields = {
   newPassword: z.string()
     .min(12, "New password must be at least 12 characters.")
     .refine(passwordWithinBcryptLimit, "New password must not exceed 72 UTF-8 bytes."),
   confirmPassword: z.string()
     .min(1, "Confirm your new password.")
     .refine(passwordWithinBcryptLimit, "Password must not exceed 72 UTF-8 bytes."),
-}).superRefine(({ newPassword, confirmPassword }, context) => {
+};
+
+function validatePasswordConfirmation(
+  { newPassword, confirmPassword }: { newPassword: string; confirmPassword: string },
+  context: z.RefinementCtx,
+) {
   if (newPassword !== confirmPassword) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -20,7 +24,13 @@ export const changePasswordSchema = z.object({
       message: "New password and confirmation do not match.",
     });
   }
-});
+}
+
+export const newPasswordConfirmationSchema = z.object(newPasswordFields).superRefine(validatePasswordConfirmation);
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(256),
+  ...newPasswordFields,
+}).superRefine(validatePasswordConfirmation);
 
 type PasswordChangeDatabase = Pick<PrismaClient, "user">;
 type PasswordChangeActor = { id: string } | null;

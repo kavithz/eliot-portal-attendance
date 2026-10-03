@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -28,6 +28,7 @@ model User {
   reviewedCorrections AttendanceCorrectionRequest[] @relation("AttendanceCorrectionReviewer")
   records             AttendanceRecord[]
   notifications       Notification[]
+  passwordResetTokens PasswordResetToken[]
 
   @@index([role])
 }
@@ -99,7 +100,7 @@ model AttendanceAuditLog {
   correctionRequestId String?
   createdAt           DateTime     @default(now())
   actor               User?        @relation("AttendanceAuditActor", fields: [actorId], references: [id])
-  employee            User?        @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  employee            User?        @relation(fields: [employeeId], references: [id])
   session             WorkSession? @relation(fields: [sessionId], references: [id])
 
   @@index([employeeId, createdAt])
@@ -133,6 +134,29 @@ model AppSetting {
   updatedBy   User?    @relation(fields: [updatedById], references: [id])
 
   @@index([category])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt DateTime @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+}
+
+model PasswordResetRateLimit {
+  id           String   @id @default(cuid())
+  keyHash      String
+  windowStart  DateTime @db.Timestamptz(3)
+  requestCount Int      @default(1)
+
+  @@unique([keyHash, windowStart])
+  @@index([windowStart])
 }
 
 enum Role {

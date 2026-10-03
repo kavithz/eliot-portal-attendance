@@ -15,6 +15,12 @@ Requirements: Node.js 20.9 or later, npm, and a reachable PostgreSQL database.
 
 Use `npm run db:migrate -- --name <migration_name>` while developing schema changes. `npm run db:push` is for disposable local prototyping only; do not use it to deploy production schema changes.
 
+## Password reset email
+
+Password reset delivery uses SMTP. Configure `APP_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, and `EMAIL_FROM`; configure `SMTP_USER` and `SMTP_PASSWORD` together when the SMTP server requires authentication. Production `APP_URL` must use HTTPS. Reset messages are not written to application logs.
+
+For local testing, point the SMTP settings at a local mail catcher such as Mailpit and inspect the message in its inbox. Set `APP_URL` to the local address used to open the app. The reset link expires after 30 minutes and can be used once. Requests are limited to three per normalized email address and twenty per client IP in a one-hour window.
+
 ## Production deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel and Neon setup, environment variables, and migration procedure. The Prisma model is aligned with the checked-in migration sequence, but an existing database with pending or unrecorded migrations must be inspected and reconciled before applying migrations; never baseline it from a schema diff alone.
