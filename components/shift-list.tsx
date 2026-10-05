@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ShiftDeleteForm } from "@/components/shift-delete-form";
 
-type Shift = { id: string; name: string };
+type Shift = { id: string; name: string; workingDays: string[] };
 type ShiftListResult = { items: Shift[]; total: number; page: number; pageCount: number };
 
 export function ShiftList({
@@ -36,11 +36,12 @@ export function ShiftList({
         <section className="overflow-hidden rounded-lg border border-[var(--line)] bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-[var(--line)] bg-zinc-50 text-xs text-[var(--muted)]"><tr><th className="px-4 py-3 font-semibold">Name</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>
+              <thead className="border-b border-[var(--line)] bg-zinc-50 text-xs text-[var(--muted)]"><tr><th className="px-4 py-3 font-semibold">Name</th><th className="px-4 py-3 font-semibold">Scheduled working days</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>
               <tbody className="divide-y divide-[var(--line)]">
                 {result.items.map((shift) => (
                   <tr key={shift.id}>
                     <td className="px-4 py-3 font-medium">{shift.name}</td>
+                    <td className="px-4 py-3 text-[var(--muted)]">{shift.workingDays.length > 0 ? shift.workingDays.map((day) => day.slice(0, 3)).join(", ") : "No days configured"}</td>
                     <td className="px-4 py-3"><div className="flex justify-end gap-2"><Link href={`/admin/shifts/${shift.id}/edit`} className="rounded-md border border-[var(--line)] px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Edit</Link><ShiftDeleteForm id={shift.id} name={shift.name} /></div></td>
                   </tr>
                 ))}

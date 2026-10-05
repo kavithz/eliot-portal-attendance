@@ -26,13 +26,23 @@ export async function saveShiftAction(
     await prisma.$transaction(async (tx) => {
       if (id) {
         const before = await getShift(admin, id, tx);
-        const updated = await updateShift(admin, id, { name: formData.get("name") }, tx);
-        if (before.name !== updated.name) {
-          await writeShiftAuditEvent(tx, { shiftId: id, actorId: admin.id, operation: "UPDATED" });
+        const updated = await updateShift(admin, id, {
+          name: formData.get("name"),
+          workingDays: formData.getAll("workingDays"),
+        }, tx);
+        const changedFields = [
+          ...(before.name !== updated.name ? ["name"] : []),
+          ...(JSON.stringify(before.workingDays) !== JSON.stringify(updated.workingDays) ? ["workingDays"] : []),
+        ];
+        if (changedFields.length > 0) {
+          await writeShiftAuditEvent(tx, { shiftId: id, actorId: admin.id, operation: "UPDATED", changedFields });
         }
       } else {
-        const created = await createShift(admin, { name: formData.get("name") }, tx);
-        await writeShiftAuditEvent(tx, { shiftId: created.id, actorId: admin.id, operation: "CREATED" });
+        const created = await createShift(admin, {
+          name: formData.get("name"),
+          workingDays: formData.getAll("workingDays"),
+        }, tx);
+        await writeShiftAuditEvent(tx, { shiftId: created.id, actorId: admin.id, operation: "CREATED", changedFields: ["name", "workingDays"] });
       }
     });
   } catch (error) {

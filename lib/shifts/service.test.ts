@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Role } from "@prisma/client";
+import type { ShiftWeekday } from "@prisma/client";
 import {
   createShift,
   deleteShift,
@@ -16,12 +17,12 @@ import { shiftRecordSchema } from "@/lib/shifts/validation";
 
 const admin = { role: Role.ADMIN };
 const employee = { role: Role.EMPLOYEE };
-type Item = { id: string; name: string; createdAt: Date; updatedAt: Date };
+type Item = { id: string; name: string; workingDays: ShiftWeekday[]; createdAt: Date; updatedAt: Date };
 
 function createDatabaseStub() {
   const records = new Map<string, Item>([
-    ["shift-1", { id: "shift-1", name: "Day", createdAt: new Date(0), updatedAt: new Date(0) }],
-    ["shift-2", { id: "shift-2", name: "Night", createdAt: new Date(0), updatedAt: new Date(0) }],
+    ["shift-1", { id: "shift-1", name: "Day", workingDays: [], createdAt: new Date(0), updatedAt: new Date(0) }],
+    ["shift-2", { id: "shift-2", name: "Night", workingDays: [], createdAt: new Date(0), updatedAt: new Date(0) }],
   ]);
   const assignedIds = new Set(["shift-2"]);
   const calls: string[] = [];
@@ -48,19 +49,19 @@ function createDatabaseStub() {
         const query = where?.name?.contains?.toLowerCase();
         return [...records.values()].filter((item) => !query || item.name.toLowerCase().includes(query)).length;
       },
-      create: async ({ data }: { data: { name: string } }) => {
+      create: async ({ data }: { data: { name: string; workingDays: ShiftWeekday[] } }) => {
         calls.push("shift.create");
         const now = new Date();
-        const item = { id: "shift-3", name: data.name, createdAt: now, updatedAt: now };
+        const item = { id: "shift-3", name: data.name, workingDays: data.workingDays, createdAt: now, updatedAt: now };
         records.set(item.id, item);
-        return { id: item.id, name: item.name };
+        return { id: item.id, name: item.name, workingDays: item.workingDays };
       },
-      update: async ({ where, data }: { where: { id: string }; data: { name: string } }) => {
+      update: async ({ where, data }: { where: { id: string }; data: { name: string; workingDays: ShiftWeekday[] } }) => {
         calls.push("shift.update");
         const current = records.get(where.id);
         if (!current) throw { code: "P2025" };
-        records.set(where.id, { ...current, name: data.name, updatedAt: new Date() });
-        return { id: where.id, name: data.name };
+        records.set(where.id, { ...current, name: data.name, workingDays: data.workingDays, updatedAt: new Date() });
+        return { id: where.id, name: data.name, workingDays: data.workingDays };
       },
       delete: async ({ where }: { where: { id: string } }) => {
         calls.push("shift.delete");
@@ -82,9 +83,10 @@ function createDatabaseStub() {
 
 describe("shift validation", () => {
   it("trims a name and rejects empty or whitespace-only values", () => {
-    assert.equal(shiftRecordSchema.parse({ name: "  Day  " }).name, "Day");
+    assert.deepEqual(shiftRecordSchema.parse({ name: "  Day  " }), { name: "Day", workingDays: [] });
     assert.equal(shiftRecordSchema.safeParse({ name: "" }).success, false);
     assert.equal(shiftRecordSchema.safeParse({ name: "   " }).success, false);
+    assert.equal(shiftRecordSchema.safeParse({ name: "Day", workingDays: ["MONDAY", "MONDAY"] }).success, false);
   });
 
   it("rejects blank Shift names on create and update before database access", async () => {
@@ -108,7 +110,10 @@ describe("shift management", () => {
 
   it("creates a Shift with a trimmed name", async () => {
     const stub = createDatabaseStub();
-    assert.deepEqual(await createShift(admin, { name: "  Evening " }, stub.database), { id: "shift-3", name: "Evening" });
+    assert.deepEqual(await createShift(admin, {
+      name: "  Evening ",
+      workingDays: ["TUESDAY", "SATURDAY"],
+    }, stub.database), { id: "shift-3", name: "Evening", workingDays: ["TUESDAY", "SATURDAY"] });
   });
 
   it("gets a Shift and reports missing IDs", async () => {
@@ -129,9 +134,13 @@ describe("shift management", () => {
 
   it("updates a Shift name", async () => {
     const stub = createDatabaseStub();
-    assert.deepEqual(await updateShift(admin, "shift-1", { name: "Daytime" }, stub.database), {
+    assert.deepEqual(await updateShift(admin, "shift-1", {
+      name: "Daytime",
+      workingDays: ["WEDNESDAY"],
+    }, stub.database), {
       id: "shift-1",
       name: "Daytime",
+      workingDays: ["WEDNESDAY"],
     });
   });
 
@@ -155,10 +164,12 @@ describe("shift management", () => {
     for (const operation of ["CREATED", "UPDATED", "DELETED"] as const) {
       await writeShiftAuditEvent(database, { shiftId: "shift-1", actorId: "admin-1", operation });
     }
-    assert.deepEqual(entries.map((entry) => entry.actionType), ["SHIFT_CREATED", "SHIFT_UPDATED", "SHIFT_DELETED"]);
+    await writeShiftAuditEvent(database, { shiftId: "shift-1", actorId: "admin-1", operation: "UPDATED", changedFields: ["workingDays"] });
+    assert.deepEqual(entries.map((entry) => entry.actionType), ["SHIFT_CREATED", "SHIFT_UPDATED", "SHIFT_DELETED", "SHIFT_UPDATED"]);
     assert.deepEqual(entries[1]?.previousValues, { shiftId: "shift-1", changedFields: ["name"] });
     assert.deepEqual(entries[1]?.newValues, { shiftId: "shift-1", changedFields: ["name"] });
     assert.deepEqual(entries[2]?.previousValues, { shiftId: "shift-1", changedFields: ["id"] });
     assert.equal("newValues" in (entries[2] ?? {}), false);
+    assert.deepEqual(entries[3]?.newValues, { shiftId: "shift-1", changedFields: ["workingDays"] });
   });
 });

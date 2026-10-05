@@ -55,7 +55,7 @@ export async function listShifts(
       orderBy: [{ name: "asc" }, { id: "asc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
-      select: { id: true, name: true, createdAt: true, updatedAt: true },
+      select: { id: true, name: true, workingDays: true, createdAt: true, updatedAt: true },
     }),
     database.shift.count({ where }),
   ]);
@@ -66,7 +66,7 @@ export async function getShift(admin: ShiftAdmin, id: string, database: ShiftDat
   assertAdmin(admin);
   const shift = await database.shift.findUnique({
     where: { id },
-    select: { id: true, name: true, createdAt: true, updatedAt: true },
+    select: { id: true, name: true, workingDays: true, createdAt: true, updatedAt: true },
   });
   if (!shift) throw new ShiftNotFoundError();
   return shift;
@@ -86,8 +86,8 @@ export async function createShift(
   database: ShiftDatabase = prisma,
 ) {
   assertAdmin(admin);
-  const { name } = shiftRecordSchema.parse(input);
-  return database.shift.create({ data: { name }, select: { id: true, name: true } });
+  const { name, workingDays } = shiftRecordSchema.parse(input);
+  return database.shift.create({ data: { name, workingDays }, select: { id: true, name: true, workingDays: true } });
 }
 
 export async function updateShift(
@@ -97,9 +97,13 @@ export async function updateShift(
   database: ShiftDatabase = prisma,
 ) {
   assertAdmin(admin);
-  const { name } = shiftRecordSchema.parse(input);
+  const { name, workingDays } = shiftRecordSchema.parse(input);
   try {
-    return await database.shift.update({ where: { id }, data: { name }, select: { id: true, name: true } });
+    return await database.shift.update({
+      where: { id },
+      data: { name, workingDays },
+      select: { id: true, name: true, workingDays: true },
+    });
   } catch (error) {
     translateShiftError(error);
   }
@@ -132,9 +136,10 @@ export async function writeShiftAuditEvent(
     shiftId: string;
     actorId: string;
     operation: "CREATED" | "UPDATED" | "DELETED";
+    changedFields?: string[];
   },
 ) {
-  const changedFields = input.operation === "DELETED" ? ["id"] : ["name"];
+  const changedFields = input.changedFields ?? (input.operation === "DELETED" ? ["id"] : ["name"]);
   await database.attendanceAuditLog.create({
     data: {
       actorId: input.actorId,

@@ -14,5 +14,5 @@ export default async function EditShiftPage({ params }: { params: Promise<{ shif
   } catch {
     notFound();
   }
-  return <div className="space-y-6"><div><Link href="/admin/shifts" className="inline-flex items-center gap-1 text-sm text-[var(--muted)]"><ChevronLeft size={16} aria-hidden="true" /> Shifts</Link><p className="mt-5 text-sm font-medium text-[var(--blue)]">Administration</p><h1 className="mt-1 text-2xl font-semibold">Edit shift</h1></div><ShiftForm id={shift.id} name={shift.name} /></div>;
+  return <div className="space-y-6"><div><Link href="/admin/shifts" className="inline-flex items-center gap-1 text-sm text-[var(--muted)]"><ChevronLeft size={16} aria-hidden="true" /> Shifts</Link><p className="mt-5 text-sm font-medium text-[var(--blue)]">Administration</p><h1 className="mt-1 text-2xl font-semibold">Edit shift</h1></div><ShiftForm id={shift.id} name={shift.name} workingDays={shift.workingDays} /></div>;
 }

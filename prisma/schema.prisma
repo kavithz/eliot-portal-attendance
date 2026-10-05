@@ -184,6 +184,7 @@ model Designation {
 model Shift {
   id        String     @id @default(cuid())
   name      String
+  workingDays ShiftWeekday[] @default([])
   createdAt DateTime   @default(now()) @db.Timestamptz(3)
   updatedAt DateTime   @updatedAt @db.Timestamptz(3)
   employees Employee[]
@@ -280,6 +281,16 @@ enum AttendanceCorrectionStatus {
   REJECTED
 }
 
+
+enum ShiftWeekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
 
 enum EmployeeDocumentType {
   APPOINTMENT_LETTER
