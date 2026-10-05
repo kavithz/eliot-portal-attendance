@@ -2,8 +2,9 @@ import Image from "next/image";
 import { LogOut } from "lucide-react";
 import { AppNav, MobileNav } from "@/components/app-nav";
 import { logoutAction } from "@/app/(auth)/logout/action";
+import type { Role } from "@prisma/client";
 
-type AppUser = { name: string; email: string; role: "EMPLOYEE" | "ADMIN" };
+type AppUser = { name: string; email: string; role: Role };
 
 export function AppShell({ user, children }: { user: AppUser; children: React.ReactNode }) {
   const initials = user.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();

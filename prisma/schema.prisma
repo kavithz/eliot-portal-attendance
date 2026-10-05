@@ -31,6 +31,8 @@ model User {
   passwordResetTokens PasswordResetToken[]
   employee            Employee?
   uploadedEmployeeDocuments EmployeeDocument[] @relation("EmployeeDocumentUploader")
+  leaveRequestsToReview LeaveRequest[] @relation("LeaveRequestCurrentApprover")
+  leaveRequestsReviewed LeaveRequest[] @relation("LeaveRequestReviewer")
 
   @@index([role])
 }
@@ -156,6 +158,8 @@ model Employee {
   user               User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   profile            EmployeeProfile?
   documents          EmployeeDocument[]
+  leaveEntitlements LeaveEntitlement[]
+  leaveRequests      LeaveRequest[]
   department         Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   designation        Designation? @relation(fields: [designationId], references: [id], onDelete: Restrict)
   shift              Shift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
@@ -191,10 +195,58 @@ model Shift {
 }
 
 model LeaveType {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  id              String             @id @default(cuid())
+  name            String
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(3)
+  entitlements    LeaveEntitlement[]
+  requests        LeaveRequest[]
+}
+
+model LeaveEntitlement {
+  id             String   @id @default(cuid())
+  employeeId     String
+  leaveTypeId    String
+  periodStart    DateTime @db.Date
+  periodEnd      DateTime @db.Date
+  openingBalance Decimal  @default(0) @db.Decimal(12, 2)
+  entitlement    Decimal  @default(0) @db.Decimal(12, 2)
+  carryForward   Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, leaveTypeId, periodStart, periodEnd])
+  @@index([leaveTypeId, periodStart, periodEnd])
+}
+
+model LeaveRequest {
+  id                   String             @id @default(cuid())
+  employeeId           String
+  leaveTypeId          String
+  startDate            DateTime           @db.Date
+  endDate              DateTime           @db.Date
+  reason               String             @db.Text
+  attachmentDocumentId String?
+  status               LeaveRequestStatus @default(PENDING)
+  currentApprovalStage String?
+  currentApproverId    String?
+  decisionReason       String?            @db.Text
+  reviewedById         String?
+  reviewedAt           DateTime?          @db.Timestamptz(3)
+  createdAt            DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime           @updatedAt @db.Timestamptz(3)
+  employee             Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType            LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  attachmentDocument   EmployeeDocument?  @relation(fields: [attachmentDocumentId], references: [id], onDelete: Restrict)
+  currentApprover      User?              @relation("LeaveRequestCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+  reviewedBy           User?              @relation("LeaveRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, status, createdAt])
+  @@index([leaveTypeId, createdAt])
+  @@index([status, createdAt])
+  @@index([currentApproverId, status])
 }
 
 model EmployeeProfile {
@@ -237,6 +289,7 @@ model EmployeeDocument {
   uploadedById     String?
   employee         Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   uploadedBy       User?                @relation("EmployeeDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  leaveRequests    LeaveRequest[]
 
   @@index([employeeId, uploadedAt])
   @@index([expiresAt])
@@ -281,6 +334,13 @@ enum AttendanceCorrectionStatus {
   REJECTED
 }
 
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RETURNED
+  CANCELLED
+}
 
 enum ShiftWeekday {
   MONDAY

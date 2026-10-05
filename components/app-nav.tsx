@@ -11,6 +11,7 @@ type NavigationLink = { href: string; label: string; icon: LucideIcon };
 const employeeLinks: NavigationLink[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/attendance", label: "Attendance", icon: CalendarDays },
+  { href: "/leave", label: "Leave", icon: BriefcaseBusiness },
   { href: "/reports", label: "My reports", icon: ChartNoAxesColumn },
   { href: "/notifications", label: "Notifications", icon: Bell },
 ];
@@ -24,7 +25,7 @@ const employeeLinksWithSettings: NavigationLink[] = [
 
 function getLinks(isAdmin: boolean) {
   return isAdmin ? [
-    ...employeeLinks,
+    ...employeeLinks.filter(({ href }) => href !== "/leave"),
     { href: "/admin", label: "Admin", icon: Shield },
     { href: "/admin/employees", label: "Employees", icon: Users },
     { href: "/admin/leave-types", label: "Leave Types", icon: BriefcaseBusiness },
@@ -35,7 +36,7 @@ function getLinks(isAdmin: boolean) {
 
 function NavigationItems({ links, pathname, onNavigate }: { links: NavigationLink[]; pathname: string; onNavigate?: () => void }) {
   return links.map(({ href, label, icon: Icon }) => {
-    const active = href === "/admin" || href === "/admin/employees" || href === "/admin/leave-types" ? pathname.startsWith(href) : pathname === href;
+    const active = href === "/admin" || href === "/admin/employees" || href === "/admin/leave-types" || href === "/leave" ? pathname.startsWith(href) : pathname === href;
     return (
       <Link key={href} href={href} onClick={onNavigate} aria-current={active ? "page" : undefined} className={`flex min-h-11 items-center gap-3 rounded-sm px-3 py-2.5 text-sm font-medium transition ${active ? "bg-white/10 text-white" : "text-slate-200/80 hover:bg-white/10 hover:text-white"}`}>
         <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
