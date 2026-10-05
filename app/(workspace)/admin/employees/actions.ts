@@ -15,6 +15,7 @@ import {
   writeEmployeeAuditEvent,
 } from "@/lib/employees/service";
 import { OrganizationNotFoundError } from "@/lib/organization/service";
+import { ShiftNotFoundError } from "@/lib/shifts/service";
 
 export type EmployeeActionState = { error: string } | null;
 
@@ -54,6 +55,7 @@ function employeeFormData(formData: FormData) {
     etfId: formData.get("etfId"),
     departmentId: formData.get("departmentId"),
     designationId: formData.get("designationId"),
+    shiftId: formData.get("shiftId"),
     email: formData.get("email"),
     password: formData.get("password"),
     role: formData.get("role"),
@@ -72,6 +74,7 @@ function employeeAuditSnapshot(employee: NonNullable<Awaited<ReturnType<typeof l
     etfId: employee.etfId,
     departmentId: employee.departmentId,
     designationId: employee.designationId,
+    shiftId: employee.shiftId,
     loginEmail: employee.user?.email,
     role: employee.user?.role,
     isActive: employee.user?.isActive,
@@ -88,6 +91,7 @@ function loadAuditEmployee(database: typeof prisma | Parameters<Parameters<typeo
 function actionError(error: unknown) {
   if (error instanceof EmployeeDuplicateError) return error.message;
   if (error instanceof OrganizationNotFoundError) return error.message;
+  if (error instanceof ShiftNotFoundError) return error.message;
   if (error instanceof z.ZodError) return error.issues[0]?.message ?? "Check the employee details and try again.";
   console.error("Employee management action failed", error instanceof Error ? error.name : "Unknown error");
   return "The employee could not be saved. Try again shortly.";
@@ -103,7 +107,7 @@ export async function createEmployeeAction(_state: EmployeeActionState, formData
         employeeId: created.id,
         actorId: admin.id,
         actionType: "EMPLOYEE_CREATED",
-        changedFields: ["name", "employeeId", "nic", "epfId", "etfId", "departmentId", "designationId", "loginEmail", "role", "countryCode", "timeZone"],
+        changedFields: ["name", "employeeId", "nic", "epfId", "etfId", "departmentId", "designationId", "shiftId", "loginEmail", "role", "countryCode", "timeZone"],
       });
       return created;
     });

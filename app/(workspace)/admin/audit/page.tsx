@@ -24,6 +24,15 @@ function organizationRecordId(...values: unknown[]) {
   return null;
 }
 
+function shiftRecordId(...values: unknown[]) {
+  for (const value of values) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || !("shiftId" in value)) continue;
+    const id = (value as Record<string, unknown>).shiftId;
+    if (typeof id === "string") return id;
+  }
+  return null;
+}
+
 export default async function AdminAuditPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   await requirePageAdmin();
   const params = await searchParams;
@@ -91,7 +100,7 @@ export default async function AdminAuditPage({ searchParams }: { searchParams: P
             <li key={entry.id} className="grid gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(180px,0.7fr)_minmax(0,1.3fr)]">
               <div>
                 <p className="text-sm font-semibold">{entry.actionType.replaceAll("_", " ")}</p>
-                <p className="mt-1 text-xs text-[var(--muted)]">Affected record: {entry.employee ? `${entry.employee.name}${entry.employee.employeeCode ? ` · ${entry.employee.employeeCode}` : ""}` : entry.sessionId ? `Session ${entry.sessionId}` : entry.correctionRequestId ? `Correction request ${entry.correctionRequestId}` : entry.actionType.startsWith("DEPARTMENT_") ? `Department ${organizationRecordId(entry.newValues, entry.previousValues) ?? ""}` : entry.actionType.startsWith("DESIGNATION_") ? `Designation ${organizationRecordId(entry.newValues, entry.previousValues) ?? ""}` : entry.actionType.startsWith("SETTING_") ? "Organization setting" : "Unlinked record"}</p>
+                <p className="mt-1 text-xs text-[var(--muted)]">Affected record: {entry.employee ? `${entry.employee.name}${entry.employee.employeeCode ? ` · ${entry.employee.employeeCode}` : ""}` : entry.sessionId ? `Session ${entry.sessionId}` : entry.correctionRequestId ? `Correction request ${entry.correctionRequestId}` : entry.actionType.startsWith("DEPARTMENT_") ? `Department ${organizationRecordId(entry.newValues, entry.previousValues) ?? ""}` : entry.actionType.startsWith("DESIGNATION_") ? `Designation ${organizationRecordId(entry.newValues, entry.previousValues) ?? ""}` : entry.actionType.startsWith("SHIFT_") ? `Shift ${shiftRecordId(entry.newValues, entry.previousValues) ?? ""}` : entry.actionType.startsWith("SETTING_") ? "Organization setting" : "Unlinked record"}</p>
                 <p className="mt-1 text-xs text-[var(--muted)]">Actor: {entry.actor?.name ?? "System"}</p>
                 <time className="mt-1 block text-xs text-[var(--muted)]" dateTime={entry.createdAt.toISOString()}>{formatInTimeZone(entry.createdAt, "UTC", "yyyy-MM-dd HH:mm:ss 'UTC'")}</time>
                 {entry.reason && <p className="mt-2 text-sm leading-5">Reason: {entry.reason}</p>}

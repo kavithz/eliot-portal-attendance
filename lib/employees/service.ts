@@ -7,6 +7,7 @@ import { hashPassword } from "@/lib/auth/password";
 import { createEmployeeSchema, updateEmployeeSchema, type AdminEmployeeProfilePatch } from "@/lib/employees/validation";
 import { employeeProfileRequiredFields } from "@/lib/employees/profile-requirements";
 import { validateEmployeeOrganizationAssignments } from "@/lib/organization/service";
+import { validateEmployeeShiftAssignment } from "@/lib/shifts/service";
 
 export const publicEmployeeSelect = {
   id: true,
@@ -21,7 +22,7 @@ export const publicEmployeeSelect = {
   updatedAt: true,
 } as const;
 
-type EmployeeDatabase = Pick<PrismaClient, "user" | "department" | "designation">;
+type EmployeeDatabase = Pick<PrismaClient, "user" | "department" | "designation" | "shift">;
 type AdminEmployeeDatabase = Pick<PrismaClient, "employee">;
 type EmployeeAdmin = { role: Role };
 
@@ -34,11 +35,13 @@ export const adminEmployeeSelect = {
   etfId: true,
   departmentId: true,
   designationId: true,
+  shiftId: true,
   userId: true,
   profileCompletedAt: true,
   profileOnboardingRequired: true,
   department: { select: { id: true, name: true } },
   designation: { select: { id: true, name: true } },
+  shift: { select: { id: true, name: true } },
   user: { select: { id: true, email: true, role: true, isActive: true, countryCode: true, timeZone: true } },
   profile: {
     select: {
@@ -75,11 +78,13 @@ const adminEmployeeListSelect = {
   etfId: true,
   departmentId: true,
   designationId: true,
+  shiftId: true,
   userId: true,
   profileCompletedAt: true,
   profileOnboardingRequired: true,
   department: { select: { id: true, name: true } },
   designation: { select: { id: true, name: true } },
+  shift: { select: { id: true, name: true } },
   user: { select: { id: true, isActive: true } },
   profile: { select: { email: true } },
 } as const;
@@ -220,8 +225,9 @@ export async function getEmployee(admin: EmployeeAdmin, employeeId: string, data
 export async function createEmployee(admin: EmployeeAdmin, input: unknown, database: EmployeeDatabase = prisma) {
   assertAdmin(admin);
   const parsed = createEmployeeSchema.parse(input);
-  const { password, nic, epfId, etfId, departmentId, designationId, ...employeeFields } = parsed;
+  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, ...employeeFields } = parsed;
   await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
+  await validateEmployeeShiftAssignment(shiftId, database);
   const passwordHash = await hashPassword(password);
 
   return withDuplicateTranslation(() => database.user.create({
@@ -237,6 +243,7 @@ export async function createEmployee(admin: EmployeeAdmin, input: unknown, datab
           ...(etfId !== undefined ? { etfId } : {}),
           departmentId: departmentId ?? null,
           designationId: designationId ?? null,
+          shiftId: shiftId ?? null,
           profileOnboardingRequired: employeeFields.role === "EMPLOYEE",
         },
       },
@@ -248,8 +255,9 @@ export async function createEmployee(admin: EmployeeAdmin, input: unknown, datab
 export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, input: unknown, database: EmployeeDatabase = prisma) {
   assertAdmin(admin);
   const parsed = updateEmployeeSchema.parse(input);
-  const { password, nic, epfId, etfId, departmentId, designationId, profile: profilePatch, ...employeeFields } = parsed;
+  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, profile: profilePatch, ...employeeFields } = parsed;
   await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
+  await validateEmployeeShiftAssignment(shiftId, database);
   const passwordHash = password ? await hashPassword(password) : undefined;
   const profileData = definedProfileFields(profilePatch);
   const profileNeedsCompletion = employeeProfileRequiredFields.some((field) => profileData[field] === null);
@@ -261,6 +269,7 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
     ...(etfId !== undefined ? { etfId } : {}),
     ...(departmentId !== undefined ? { departmentId } : {}),
     ...(designationId !== undefined ? { designationId } : {}),
+    ...(shiftId !== undefined ? { shiftId } : {}),
   };
   const employeeUpdate = {
     ...employeeScalars,
@@ -273,6 +282,7 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
     ...employeeScalars,
     departmentId: departmentId ?? null,
     designationId: designationId ?? null,
+    shiftId: shiftId ?? null,
     profileOnboardingRequired: false,
     ...(Object.keys(profileData).length > 0 ? { profile: { create: profileData } } : {}),
   };

@@ -147,6 +147,7 @@ model Employee {
   etfId              String?
   departmentId       String?
   designationId      String?
+  shiftId            String?
   userId             String?   @unique
   profileCompletedAt DateTime? @db.Timestamptz(3)
   profileOnboardingRequired Boolean @default(false)
@@ -157,9 +158,11 @@ model Employee {
   documents          EmployeeDocument[]
   department         Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   designation        Designation? @relation(fields: [designationId], references: [id], onDelete: Restrict)
+  shift              Shift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
 
   @@index([departmentId])
   @@index([designationId])
+  @@index([shiftId])
 }
 
 model Department {
@@ -171,6 +174,14 @@ model Department {
 }
 
 model Designation {
+  id        String     @id @default(cuid())
+  name      String
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(3)
+  employees Employee[]
+}
+
+model Shift {
   id        String     @id @default(cuid())
   name      String
   createdAt DateTime   @default(now()) @db.Timestamptz(3)

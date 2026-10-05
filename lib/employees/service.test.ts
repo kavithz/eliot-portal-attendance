@@ -19,6 +19,7 @@ import {
 } from "@/lib/employees/service";
 import { createEmployeeSchema } from "@/lib/employees/validation";
 import { OrganizationNotFoundError } from "@/lib/organization/service";
+import { ShiftNotFoundError } from "@/lib/shifts/service";
 
 const admin = { role: Role.ADMIN };
 const employeeInput = {
@@ -55,9 +56,12 @@ function createDatabaseStub() {
   const designation = {
     findUnique: async ({ where }: { where: { id: string } }) => where.id === "designation-1" ? { id: where.id } : null,
   };
+  const shift = {
+    findUnique: async ({ where }: { where: { id: string } }) => where.id === "shift-1" ? { id: where.id } : null,
+  };
 
   return {
-    database: { user, department, designation } as never,
+    database: { user, department, designation, shift } as never,
     getCreateData: () => createData,
     getCreateSelect: () => createSelect,
     getUpdateData: () => updateData,
@@ -81,6 +85,7 @@ describe("employee management", () => {
         employeeId: employeeInput.employeeCode,
         departmentId: null,
         designationId: null,
+        shiftId: null,
         profileOnboardingRequired: true,
       },
     });
@@ -152,7 +157,7 @@ describe("employee management", () => {
 
     assert.deepEqual(stub.getUpdateData()?.employee, {
       upsert: {
-        create: { name: "Updated Employee", employeeId: "EMP-1002", departmentId: null, designationId: null, profileOnboardingRequired: false },
+        create: { name: "Updated Employee", employeeId: "EMP-1002", departmentId: null, designationId: null, shiftId: null, profileOnboardingRequired: false },
         update: { name: "Updated Employee", employeeId: "EMP-1002" },
       },
     });
@@ -171,6 +176,7 @@ describe("employee management", () => {
         etfId: "ETF-456",
         departmentId: null,
         designationId: null,
+        shiftId: null,
         profileOnboardingRequired: true,
       },
     });
@@ -227,6 +233,7 @@ describe("employee management", () => {
       employeeId: employeeInput.employeeCode,
       departmentId: "department-1",
       designationId: "designation-1",
+      shiftId: null,
       profileOnboardingRequired: true,
     });
 
@@ -280,6 +287,43 @@ describe("employee management", () => {
     assert.deepEqual(employeeAuditMetadata(["departmentId", "designationId"]), {
       changedFields: ["departmentId", "designationId"],
     });
+  });
+
+  it("assigns, clears, and leaves Shift unassigned on employee create and update", async () => {
+    const assigned = createDatabaseStub();
+    await createEmployee(admin, { ...employeeInput, shiftId: "shift-1" }, assigned.database);
+    const create = (assigned.getCreateData()?.employee as { create: Record<string, unknown> }).create;
+    assert.equal(create.shiftId, "shift-1");
+
+    await updateEmployee(admin, "employee-1", {
+      ...employeeInput,
+      password: "",
+      shiftId: "",
+    }, assigned.database);
+    const update = (assigned.getUpdateData()?.employee as { upsert: { update: Record<string, unknown> } }).upsert.update;
+    assert.equal(update.shiftId, null);
+
+    const unassigned = createDatabaseStub();
+    await createEmployee(admin, { ...employeeInput, shiftId: null }, unassigned.database);
+    const unassignedCreate = (unassigned.getCreateData()?.employee as { create: Record<string, unknown> }).create;
+    assert.equal(unassignedCreate.shiftId, null);
+  });
+
+  it("rejects nonexistent Shift IDs before writing", async () => {
+    const stub = createDatabaseStub();
+    await assert.rejects(createEmployee(admin, { ...employeeInput, shiftId: "missing" }, stub.database), ShiftNotFoundError);
+    await assert.rejects(updateEmployee(admin, "employee-1", {
+      ...employeeInput,
+      password: "",
+      shiftId: "missing",
+    }, stub.database), ShiftNotFoundError);
+    assert.equal(stub.getCreateData(), undefined);
+    assert.equal(stub.getUpdateData(), undefined);
+  });
+
+  it("includes Employee Shift assignment changes as field names in audit metadata", () => {
+    assert.deepEqual(changedEmployeeFieldNames({ shiftId: null }, { shiftId: "shift-1" }), ["shiftId"]);
+    assert.deepEqual(employeeAuditMetadata(["shiftId"]), { changedFields: ["shiftId"] });
   });
 
   it("rejects invalid optional identity/profile fields on the server", async () => {

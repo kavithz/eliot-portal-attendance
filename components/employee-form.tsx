@@ -14,6 +14,7 @@ type EmployeeFormValues = {
   etfId: string | null;
   departmentId: string | null;
   designationId: string | null;
+  shiftId: string | null;
   email: string;
   role: "EMPLOYEE" | "ADMIN";
   countryCode: string;
@@ -49,11 +50,13 @@ export function EmployeeForm({
   defaultTimeZone = "Asia/Colombo",
   departments,
   designations,
+  shifts,
 }: {
   employee?: EmployeeFormValues;
   defaultTimeZone?: string;
   departments: OrganizationOption[];
   designations: OrganizationOption[];
+  shifts: OrganizationOption[];
 }) {
   const boundUpdateAction = employee ? updateEmployeeAction.bind(null, employee.id) : createEmployeeAction;
   const [state, formAction, pending] = useActionState<EmployeeActionState, FormData>(boundUpdateAction, null);
@@ -81,6 +84,13 @@ export function EmployeeForm({
           <select id="designationId" name="designationId" defaultValue={employee?.designationId ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm">
             <option value="">Unassigned</option>
             {designations.map((designation) => <option key={designation.id} value={designation.id}>{designation.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="shiftId" className="mb-2 block text-sm font-semibold">Shift</label>
+          <select id="shiftId" name="shiftId" defaultValue={employee?.shiftId ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm">
+            <option value="">Unassigned</option>
+            {shifts.map((shift) => <option key={shift.id} value={shift.id}>{shift.name}</option>)}
           </select>
         </div>
         <div>

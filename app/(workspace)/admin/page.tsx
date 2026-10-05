@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { ArrowRight, BriefcaseBusiness, CalendarDays, SlidersHorizontal, Users, ChartNoAxesColumn } from "lucide-react";
+import { ArrowRight, BriefcaseBusiness, CalendarDays, Clock3, SlidersHorizontal, Users, ChartNoAxesColumn } from "lucide-react";
 
 const sections = [
   { href: "/admin/employees", label: "Employees", description: "Employee directory foundation", icon: Users },
   { href: "/admin/departments", label: "Departments", description: "Manage employee departments", icon: BriefcaseBusiness },
   { href: "/admin/designations", label: "Designations", description: "Manage employee designations", icon: BriefcaseBusiness },
+  { href: "/admin/shifts", label: "Shifts", description: "Manage employee shifts", icon: Clock3 },
   { href: "/admin/attendance", label: "Attendance", description: "Organization attendance records", icon: CalendarDays },
   { href: "/admin/reports", label: "Reports", description: "Organization reporting foundation", icon: ChartNoAxesColumn },
   { href: "/admin/settings", label: "Settings", description: "Policy configuration foundation", icon: SlidersHorizontal },
