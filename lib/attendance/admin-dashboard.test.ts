@@ -47,6 +47,14 @@ function createDatabase(employees: Employee[], daySessions: Session[], openSessi
         return employees.filter((employee) => employee.role === args.where.role && employee.isActive === args.where.isActive && (!args.where.id || employee.id === args.where.id));
       },
     },
+    employee: {
+      findMany: async ({ where }: { where: { userId: { in: string[] } } }) => where.userId.in.map((userId) => ({
+        id: `record-${userId}`,
+        name: `HR ${userId}`,
+        employeeId: `HR-${userId}`,
+        userId,
+      })),
+    },
     workSession: {
       findMany: async (args: { where: Record<string, unknown> }) => {
         queries.push(args.where);
@@ -90,6 +98,13 @@ describe("admin attendance summary dashboard", () => {
     assert.equal(sriLankaDay?.sessions.length, 2);
     assert.equal(sriLankaDay?.totalWorkedMs, 7 * 60 * 60 * 1000 + 59 * 60 * 1000);
     assert.deepEqual(sriLankaDay?.sessions.map(({ session: item }) => item.mode), ["OFFICE", "WFH"]);
+    const linkedEmployee = result.employees.find(({ employee }) => employee.id === sriLanka.id)?.employee;
+    assert.deepEqual(linkedEmployee?.employeeRecord, {
+      id: `record-${sriLanka.id}`,
+      name: `HR ${sriLanka.id}`,
+      employeeId: `HR-${sriLanka.id}`,
+    });
+    assert.equal(linkedEmployee?.id, sriLanka.id);
   });
 
   it("uses employee-local selected dates for employees whose UTC instant differs by timezone", async () => {

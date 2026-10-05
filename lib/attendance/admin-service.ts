@@ -6,10 +6,11 @@ import { prisma } from "@/lib/prisma";
 import { getEmployeeLocalDayWindow } from "@/lib/attendance/timezone";
 import { groupSessionsByEmployeeLocalDay } from "@/lib/attendance/history";
 import { lockAttendanceEmployee } from "@/lib/attendance/service";
+import { resolveAttendanceEmployees } from "@/lib/attendance/employee-link";
 import { adminAttendanceCorrectionSchema, adminAttendanceFilterSchema, type AdminAttendanceFilters } from "@/lib/attendance/admin-validation";
 
 type AdminActor = { id?: string; role: Role } | null;
-type AdminAttendanceDatabase = Pick<PrismaClient, "user" | "workSession">;
+type AdminAttendanceDatabase = Pick<PrismaClient, "user" | "employee" | "workSession">;
 type AdminAttendanceWriteDatabase = AdminAttendanceDatabase & Pick<PrismaClient, "$transaction">;
 
 export const adminEmployeeSelect = {
@@ -74,10 +75,22 @@ export async function listAdminAttendance(
     select: adminEmployeeSelect,
     orderBy: { name: "asc" },
   });
-  if (filters.employeeId && employees.length === 0) return { employees, sessions: [], dailySummaries: [], filters };
+  if (filters.employeeId && employees.length === 0) {
+    return {
+      employees: employees.map((employee) => ({ ...employee, employeeRecord: null })),
+      sessions: [],
+      dailySummaries: [],
+      filters,
+    };
+  }
+  const employeeRecords = await resolveAttendanceEmployees(employees.map(({ id }) => id), database);
+  const employeesWithRecords = employees.map((employee) => ({
+    ...employee,
+    employeeRecord: employeeRecords.get(employee.id) ?? null,
+  }));
 
   const dateRanges = filters.from || filters.to
-    ? employees.map((employee) => {
+    ? employeesWithRecords.map((employee) => {
         const startAt = filters.from
           ? getEmployeeLocalDayWindow(fromZonedTime(`${filters.from}T12:00:00.000`, employee.timeZone), employee.timeZone).startAt
           : undefined;
@@ -89,12 +102,14 @@ export async function listAdminAttendance(
       })
     : undefined;
 
-  if (dateRanges && dateRanges.length === 0) return { employees, sessions: [], dailySummaries: [], filters };
+  if (dateRanges && dateRanges.length === 0) {
+    return { employees: employeesWithRecords, sessions: [], dailySummaries: [], filters };
+  }
 
   const where: Prisma.WorkSessionWhereInput = {
     ...(filters.mode !== "ALL" ? { mode: filters.mode } : {}),
     ...(filters.status === "ACTIVE" ? { endAt: null } : filters.status === "COMPLETED" ? { endAt: { not: null } } : {}),
-    ...(dateRanges ? { OR: dateRanges } : { record: { employeeId: { in: employees.map((employee) => employee.id) } } }),
+    ...(dateRanges ? { OR: dateRanges } : { record: { employeeId: { in: employeesWithRecords.map((employee) => employee.id) } } }),
   };
 
   const sessions = await database.workSession.findMany({
@@ -107,21 +122,31 @@ export async function listAdminAttendance(
     orderBy: { startAt: "desc" },
     take: 500,
   });
+  const sessionsWithEmployeeRecords = sessions.map((session) => ({
+    ...session,
+    record: {
+      ...session.record,
+      employee: {
+        ...session.record.employee,
+        employeeRecord: employeeRecords.get(session.record.employee.id) ?? null,
+      },
+    },
+  }));
 
-  const sessionsByEmployee = new Map<string, typeof sessions>();
-  for (const session of sessions) {
+  const sessionsByEmployee = new Map<string, typeof sessionsWithEmployeeRecords>();
+  for (const session of sessionsWithEmployeeRecords) {
     const employeeId = session.record.employee.id;
     const employeeSessions = sessionsByEmployee.get(employeeId) ?? [];
     employeeSessions.push(session);
     sessionsByEmployee.set(employeeId, employeeSessions);
   }
 
-  const dailySummaries = employees.flatMap((employee) => {
+  const dailySummaries = employeesWithRecords.flatMap((employee) => {
     const employeeSessions = sessionsByEmployee.get(employee.id) ?? [];
     return groupSessionsByEmployeeLocalDay(employeeSessions, employee.timeZone).days.map((day) => ({ employee, day }));
   }).sort((left, right) => right.day.date.localeCompare(left.day.date) || left.employee.name.localeCompare(right.employee.name));
 
-  return { employees, sessions, dailySummaries, filters };
+  return { employees: employeesWithRecords, sessions: sessionsWithEmployeeRecords, dailySummaries, filters };
 }
 
 export async function correctAdminAttendance(

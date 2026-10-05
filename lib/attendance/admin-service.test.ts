@@ -39,7 +39,7 @@ function makeSession(id: string, mode: "OFFICE" | "WFH" = "OFFICE", timeZone = "
   };
 }
 
-function createDatabase(sessions = [makeSession("one")]) {
+function createDatabase(sessions = [makeSession("one")], linkedUserIds?: string[]) {
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const employeeRows = [...new Map(sessions.map((session) => [session.record.employee.id, session.record.employee])).values()];
   const calls: { findWhere?: unknown; employeeSelect?: unknown; updateData?: Record<string, unknown>; auditData?: Record<string, unknown> } = {};
@@ -84,6 +84,15 @@ function createDatabase(sessions = [makeSession("one")]) {
         return args.where?.id ? employeeRows.filter((employee) => employee.id === args.where?.id) : employeeRows;
       },
     },
+    employee: {
+      findMany: async ({ where }: { where: { userId: { in: string[] } } }) => where.userId.in.flatMap((userId) => {
+        if (linkedUserIds && !linkedUserIds.includes(userId)) return [];
+        const user = employeeRows.find((row) => row.id === userId);
+        return user
+          ? [{ id: `record-${user.id}`, name: `HR ${user.name}`, employeeId: `HR-${user.employeeCode}`, userId }]
+          : [];
+      }),
+    },
     workSession,
     $transaction: async (operation: (transaction: never) => Promise<unknown>) => operation(transaction as never),
   } as never;
@@ -111,6 +120,13 @@ describe("admin attendance access and corrections", () => {
     const result = await listAdminAttendance(admin, {}, stub.database);
     assert.equal(result.sessions.length, 2);
     assert.deepEqual(result.sessions.map((session) => session.mode), ["OFFICE", "WFH"]);
+    assert.deepEqual(result.sessions[0].record.employee.employeeRecord, {
+      id: "record-employee-office",
+      name: "HR Employee office",
+      employeeId: "HR-CODE-office",
+    });
+    assert.equal(result.sessions[0].record.employee.id, "employee-office");
+    assert.equal(result.employees[0].id, "employee-office");
     assert.equal("passwordHash" in (stub.calls.employeeSelect as object), false);
     assert.equal("passwordHash" in result.sessions[0].record.employee, false);
   });
@@ -120,6 +136,18 @@ describe("admin attendance access and corrections", () => {
     const result = await listAdminAttendance(admin, { employeeId: "missing-employee" }, stub.database);
     assert.deepEqual(result.sessions, []);
     assert.deepEqual(result.dailySummaries, []);
+  });
+
+  it("keeps User-owned attendance readable when no linked Employee exists", async () => {
+    const stub = createDatabase([makeSession("legacy-user")], []);
+
+    const result = await listAdminAttendance(admin, {}, stub.database);
+
+    assert.equal(result.sessions.length, 1);
+    assert.equal(result.sessions[0].record.employee.id, "employee-legacy-user");
+    assert.equal(result.sessions[0].record.employee.employeeRecord, null);
+    assert.equal(result.employees[0].id, "employee-legacy-user");
+    assert.equal(result.employees[0].employeeRecord, null);
   });
 
   it("filters date ranges with each employee's own timezone", async () => {
