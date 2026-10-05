@@ -8,10 +8,12 @@ import {
   EmployeeAccessError,
   EmployeeDuplicateError,
   EmployeeNotFoundError,
+  EmployeeReportingAssignmentError,
   changedEmployeeFieldNames,
   employeeAuditMetadata,
   getEmployee,
   listEmployees,
+  listEmployeeReportingOptions,
   publicEmployeeSelect,
   setEmployeeActive,
   updateEmployee,
@@ -68,6 +70,38 @@ function createDatabaseStub() {
   };
 }
 
+function createReportingDatabaseStub(current?: { id: string; departmentId: string | null }) {
+  const selectedEmployees = new Map([
+    ["supervisor-1", { id: "supervisor-1", user: { role: Role.SUPERVISOR, isActive: true } }],
+    ["manager-1", { id: "manager-1", departmentId: "department-1", user: { role: Role.DEPARTMENT_MANAGER, isActive: true } }],
+  ]);
+  let createData: Record<string, unknown> | undefined;
+  let updateData: Record<string, unknown> | undefined;
+  const database = {
+    user: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        createData = data;
+        return { ...data, id: "new-user", isActive: true };
+      },
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        updateData = data;
+        return { id: "current-user" };
+      },
+    },
+    employee: {
+      findUnique: async ({ where }: { where: { id?: string; userId?: string } }) => {
+        if (where.userId) return current ?? null;
+        if (current && where.id === current.id) return { id: current.id, user: { role: Role.SUPERVISOR, isActive: true } };
+        return selectedEmployees.get(where.id ?? "") ?? null;
+      },
+    },
+    department: { findUnique: async ({ where }: { where: { id: string } }) => ["department-1", "department-other"].includes(where.id) ? { id: where.id } : null },
+    designation: { findUnique: async () => null },
+    shift: { findUnique: async () => null },
+  } as never;
+  return { database, getCreateData: () => createData, getUpdateData: () => updateData };
+}
+
 describe("employee management", () => {
   it("allows an admin to create a hashed employee account without returning its hash", async () => {
     const stub = createDatabaseStub();
@@ -86,6 +120,8 @@ describe("employee management", () => {
         departmentId: null,
         designationId: null,
         shiftId: null,
+        supervisorId: null,
+        managerId: null,
         profileOnboardingRequired: true,
       },
     });
@@ -114,6 +150,14 @@ describe("employee management", () => {
   it("rejects an invalid IANA timezone", () => {
     const result = createEmployeeSchema.safeParse({ ...employeeInput, timeZone: "Mars/Olympus" });
     assert.equal(result.success, false);
+  });
+
+
+  it("requires profile onboarding for every non-administrator role", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(admin, { ...employeeInput, role: Role.SUPERVISOR }, stub.database);
+    const employee = (stub.getCreateData()?.employee as { create: Record<string, unknown> }).create;
+    assert.equal(employee.profileOnboardingRequired, true);
   });
 
   it("rejects a missing country code", () => {
@@ -157,7 +201,7 @@ describe("employee management", () => {
 
     assert.deepEqual(stub.getUpdateData()?.employee, {
       upsert: {
-        create: { name: "Updated Employee", employeeId: "EMP-1002", departmentId: null, designationId: null, shiftId: null, profileOnboardingRequired: false },
+        create: { name: "Updated Employee", employeeId: "EMP-1002", departmentId: null, designationId: null, shiftId: null, supervisorId: null, managerId: null, profileOnboardingRequired: false },
         update: { name: "Updated Employee", employeeId: "EMP-1002" },
       },
     });
@@ -177,6 +221,8 @@ describe("employee management", () => {
         departmentId: null,
         designationId: null,
         shiftId: null,
+        supervisorId: null,
+        managerId: null,
         profileOnboardingRequired: true,
       },
     });
@@ -234,6 +280,8 @@ describe("employee management", () => {
       departmentId: "department-1",
       designationId: "designation-1",
       shiftId: null,
+      supervisorId: null,
+      managerId: null,
       profileOnboardingRequired: true,
     });
 
@@ -321,9 +369,93 @@ describe("employee management", () => {
     assert.equal(stub.getUpdateData(), undefined);
   });
 
+  it("creates direct Supervisor and same-department Manager assignments", async () => {
+    const stub = createReportingDatabaseStub();
+    await createEmployee(admin, {
+      ...employeeInput,
+      departmentId: "department-1",
+      supervisorId: "supervisor-1",
+      managerId: "manager-1",
+    }, stub.database);
+    const createdEmployee = (stub.getCreateData()?.employee as { create: Record<string, unknown> }).create;
+    assert.equal(createdEmployee.supervisorId, "supervisor-1");
+    assert.equal(createdEmployee.managerId, "manager-1");
+  });
+
+  it("offers only active Supervisor and Department Manager reporting options to administrators", async () => {
+    let query: Record<string, unknown> | undefined;
+    const database = {
+      employee: {
+        findMany: async (input: Record<string, unknown>) => {
+          query = input;
+          return [
+            { id: "supervisor-1", user: { role: Role.SUPERVISOR } },
+            { id: "manager-1", user: { role: Role.DEPARTMENT_MANAGER } },
+            { id: "employee-1", user: { role: Role.EMPLOYEE } },
+          ];
+        },
+      },
+    } as never;
+    const options = await listEmployeeReportingOptions(admin, database);
+    assert.deepEqual(options.supervisors.map(({ id }) => id), ["supervisor-1"]);
+    assert.deepEqual(options.managers.map(({ id }) => id), ["manager-1"]);
+    assert.deepEqual(query?.where, {
+      user: { is: { isActive: true, role: { in: ["SUPERVISOR", "DEPARTMENT_MANAGER"] } } },
+    });
+
+    let queried = false;
+    await assert.rejects(listEmployeeReportingOptions({ role: Role.EMPLOYEE }, {
+      employee: { findMany: async () => { queried = true; return []; } },
+    } as never), EmployeeAccessError);
+    assert.equal(queried, false);
+  });
+
+  it("rejects self, wrong-role, inactive, and cross-department reporting assignments", async () => {
+    const current = { id: "current-employee", departmentId: "department-1" };
+    const invalidRefs = [
+      { supervisorId: "missing" },
+      { supervisorId: "current-employee" },
+      { supervisorId: "manager-1" },
+      { managerId: "supervisor-1" },
+      { managerId: "manager-1", departmentId: "department-other" },
+    ];
+    for (const refs of invalidRefs) {
+      const stub = createReportingDatabaseStub(current);
+      await assert.rejects(updateEmployee(admin, "current-user", {
+        ...employeeInput,
+        password: "",
+        ...refs,
+      }, stub.database), EmployeeReportingAssignmentError);
+      assert.equal(stub.getUpdateData(), undefined);
+    }
+    const inactiveDatabase = createReportingDatabaseStub();
+    const withInactiveSupervisor = {
+      ...inactiveDatabase,
+      database: {
+        employee: {
+          findUnique: async ({ where }: { where: { id?: string } }) => where.id === "supervisor-1"
+            ? { id: "supervisor-1", user: { role: Role.SUPERVISOR, isActive: false } }
+            : { id: "manager-1", departmentId: "department-1", user: { role: Role.DEPARTMENT_MANAGER, isActive: true } },
+        },
+        user: { create: async () => ({}) },
+        department: { findUnique: async () => null },
+        designation: { findUnique: async () => null },
+        shift: { findUnique: async () => null },
+      } as never,
+    };
+    await assert.rejects(createEmployee(admin, { ...employeeInput, supervisorId: "supervisor-1" }, withInactiveSupervisor.database), EmployeeReportingAssignmentError);
+  });
+
   it("includes Employee Shift assignment changes as field names in audit metadata", () => {
     assert.deepEqual(changedEmployeeFieldNames({ shiftId: null }, { shiftId: "shift-1" }), ["shiftId"]);
     assert.deepEqual(employeeAuditMetadata(["shiftId"]), { changedFields: ["shiftId"] });
+  });
+
+  it("records Supervisor and Manager assignments by field name only", () => {
+    assert.deepEqual(changedEmployeeFieldNames(
+      { supervisorId: null, managerId: "manager-old" },
+      { supervisorId: "supervisor-1", managerId: null },
+    ), ["managerId", "supervisorId"]);
   });
 
   it("rejects invalid optional identity/profile fields on the server", async () => {

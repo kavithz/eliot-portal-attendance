@@ -22,7 +22,7 @@ export const publicEmployeeSelect = {
   updatedAt: true,
 } as const;
 
-type EmployeeDatabase = Pick<PrismaClient, "user" | "department" | "designation" | "shift">;
+type EmployeeDatabase = Pick<PrismaClient, "user" | "employee" | "department" | "designation" | "shift">;
 type AdminEmployeeDatabase = Pick<PrismaClient, "employee">;
 type EmployeeAdmin = { role: Role };
 
@@ -36,12 +36,16 @@ export const adminEmployeeSelect = {
   departmentId: true,
   designationId: true,
   shiftId: true,
+  supervisorId: true,
+  managerId: true,
   userId: true,
   profileCompletedAt: true,
   profileOnboardingRequired: true,
   department: { select: { id: true, name: true } },
   designation: { select: { id: true, name: true } },
   shift: { select: { id: true, name: true } },
+  supervisor: { select: { id: true, name: true, employeeId: true } },
+  manager: { select: { id: true, name: true, employeeId: true } },
   user: { select: { id: true, email: true, role: true, isActive: true, countryCode: true, timeZone: true } },
   profile: {
     select: {
@@ -114,6 +118,13 @@ export class EmployeeNotFoundError extends Error {
   constructor() {
     super("Employee not found.");
     this.name = "EmployeeNotFoundError";
+  }
+}
+
+export class EmployeeReportingAssignmentError extends Error {
+  constructor(kind: "supervisor" | "manager") {
+    super(`Choose a valid ${kind === "supervisor" ? "Supervisor" : "Department Manager"} for this employee.`);
+    this.name = "EmployeeReportingAssignmentError";
   }
 }
 
@@ -222,12 +233,78 @@ export async function getEmployee(admin: EmployeeAdmin, employeeId: string, data
   return employee;
 }
 
+export async function listEmployeeReportingOptions(admin: EmployeeAdmin, database: AdminEmployeeDatabase = prisma) {
+  assertAdmin(admin);
+  const employees = await database.employee.findMany({
+    where: { user: { is: { isActive: true, role: { in: ["SUPERVISOR", "DEPARTMENT_MANAGER"] } } } },
+    select: {
+      id: true,
+      name: true,
+      employeeId: true,
+      departmentId: true,
+      user: { select: { role: true } },
+    },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+  });
+  return {
+    supervisors: employees.filter((employee) => employee.user?.role === "SUPERVISOR"),
+    managers: employees.filter((employee) => employee.user?.role === "DEPARTMENT_MANAGER"),
+  };
+}
+
+async function validateEmployeeReportingAssignments(
+  assignments: { supervisorId?: string | null; managerId?: string | null; departmentId?: string | null },
+  userId: string | undefined,
+  database: EmployeeDatabase,
+) {
+  if (!assignments.supervisorId && !assignments.managerId) return;
+
+  const current = userId
+    ? await database.employee.findUnique({ where: { userId }, select: { id: true, departmentId: true } })
+    : null;
+  const departmentId = assignments.departmentId === undefined ? current?.departmentId : assignments.departmentId;
+  const [supervisor, manager] = await Promise.all([
+    assignments.supervisorId
+      ? database.employee.findUnique({
+          where: { id: assignments.supervisorId },
+          select: { id: true, user: { select: { role: true, isActive: true } } },
+        })
+      : Promise.resolve(null),
+    assignments.managerId
+      ? database.employee.findUnique({
+          where: { id: assignments.managerId },
+          select: { id: true, departmentId: true, user: { select: { role: true, isActive: true } } },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (assignments.supervisorId && (
+    !supervisor
+    || supervisor.id === current?.id
+    || supervisor.user?.role !== "SUPERVISOR"
+    || !supervisor.user.isActive
+  )) {
+    throw new EmployeeReportingAssignmentError("supervisor");
+  }
+  if (assignments.managerId && (
+    !manager
+    || manager.id === current?.id
+    || manager.user?.role !== "DEPARTMENT_MANAGER"
+    || !manager.user.isActive
+    || !departmentId
+    || manager.departmentId !== departmentId
+  )) {
+    throw new EmployeeReportingAssignmentError("manager");
+  }
+}
+
 export async function createEmployee(admin: EmployeeAdmin, input: unknown, database: EmployeeDatabase = prisma) {
   assertAdmin(admin);
   const parsed = createEmployeeSchema.parse(input);
-  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, ...employeeFields } = parsed;
+  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, supervisorId, managerId, ...employeeFields } = parsed;
   await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
   await validateEmployeeShiftAssignment(shiftId, database);
+  await validateEmployeeReportingAssignments({ supervisorId, managerId, departmentId }, undefined, database);
   const passwordHash = await hashPassword(password);
 
   return withDuplicateTranslation(() => database.user.create({
@@ -244,7 +321,9 @@ export async function createEmployee(admin: EmployeeAdmin, input: unknown, datab
           departmentId: departmentId ?? null,
           designationId: designationId ?? null,
           shiftId: shiftId ?? null,
-          profileOnboardingRequired: employeeFields.role === "EMPLOYEE",
+          supervisorId: supervisorId ?? null,
+          managerId: managerId ?? null,
+          profileOnboardingRequired: employeeFields.role !== "ADMIN",
         },
       },
     },
@@ -255,9 +334,10 @@ export async function createEmployee(admin: EmployeeAdmin, input: unknown, datab
 export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, input: unknown, database: EmployeeDatabase = prisma) {
   assertAdmin(admin);
   const parsed = updateEmployeeSchema.parse(input);
-  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, profile: profilePatch, ...employeeFields } = parsed;
+  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, supervisorId, managerId, profile: profilePatch, ...employeeFields } = parsed;
   await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
   await validateEmployeeShiftAssignment(shiftId, database);
+  await validateEmployeeReportingAssignments({ supervisorId, managerId, departmentId }, employeeId, database);
   const passwordHash = password ? await hashPassword(password) : undefined;
   const profileData = definedProfileFields(profilePatch);
   const profileNeedsCompletion = employeeProfileRequiredFields.some((field) => profileData[field] === null);
@@ -270,6 +350,8 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
     ...(departmentId !== undefined ? { departmentId } : {}),
     ...(designationId !== undefined ? { designationId } : {}),
     ...(shiftId !== undefined ? { shiftId } : {}),
+    ...(supervisorId !== undefined ? { supervisorId } : {}),
+    ...(managerId !== undefined ? { managerId } : {}),
   };
   const employeeUpdate = {
     ...employeeScalars,
@@ -283,6 +365,8 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
     departmentId: departmentId ?? null,
     designationId: designationId ?? null,
     shiftId: shiftId ?? null,
+    supervisorId: supervisorId ?? null,
+    managerId: managerId ?? null,
     profileOnboardingRequired: false,
     ...(Object.keys(profileData).length > 0 ? { profile: { create: profileData } } : {}),
   };

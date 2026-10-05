@@ -13,6 +13,13 @@ function dateOrMissing(value: Date | null | undefined) {
   return value ? value.toISOString().slice(0, 10) : "Not provided";
 }
 
+function roleLabel(role: string | undefined) {
+  if (role === "ADMIN") return "Super Administrator";
+  if (role === "DEPARTMENT_MANAGER") return "Department Manager";
+  if (role === "SUPERVISOR") return "Supervisor";
+  return role === "EMPLOYEE" ? "Employee" : "No account";
+}
+
 export default async function EmployeeDetailPage({ params }: { params: Promise<{ employeeId: string }> }) {
   const admin = await requireAdmin();
   const { employeeId } = await params;
@@ -44,8 +51,10 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
           <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Department</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.department?.name)}</dd></div>
           <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Designation</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.designation?.name)}</dd></div>
           <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Shift</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.shift?.name)}</dd></div>
+          <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Supervisor</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.supervisor?.name)}</dd></div>
+          <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Department Manager</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.manager?.name)}</dd></div>
           <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Login email</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.user?.email)}</dd></div>
-          <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Role</dt><dd className="mt-1.5 text-sm font-semibold">{employee.user?.role === "ADMIN" ? "Admin" : employee.user ? "Employee" : "No account"}</dd></div>
+          <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Role</dt><dd className="mt-1.5 text-sm font-semibold">{roleLabel(employee.user?.role)}</dd></div>
           <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">Country code</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.user?.countryCode)}</dd></div>
           <div className="border-b border-[var(--line)] py-4"><dt className="text-xs text-[var(--muted)]">IANA timezone</dt><dd className="mt-1.5 text-sm font-semibold">{valueOrMissing(employee.user?.timeZone)}</dd></div>
           <div className="py-4"><dt className="text-xs text-[var(--muted)]">Account status</dt><dd className="mt-1.5 text-sm font-semibold">{employee.user ? employee.user.isActive ? "Active" : "Inactive" : "No account"}</dd></div>

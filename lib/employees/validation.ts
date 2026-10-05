@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isIanaTimeZone } from "@/lib/attendance/timezone";
 import { passwordWithinBcryptLimit } from "@/lib/auth/password";
-import { organizationAssignmentsSchema } from "@/lib/organization/validation";
+import { organizationAssignmentsSchema, organizationIdSchema } from "@/lib/organization/validation";
 import { shiftIdSchema } from "@/lib/shifts/validation";
 
 const countryTimeZones: Record<string, string> = {
@@ -23,7 +23,7 @@ export function isCountryCode(value: string) {
 const employeeFields = {
   name: z.string().trim().min(1, "Name is required.").max(120),
   email: z.string().trim().email("Enter a valid email.").max(254).transform((value) => value.toLowerCase()),
-  role: z.enum(["EMPLOYEE", "ADMIN"]),
+  role: z.enum(["EMPLOYEE", "ADMIN", "DEPARTMENT_MANAGER", "SUPERVISOR"]),
   countryCode: z.string().trim().toUpperCase().refine(isCountryCode, "Enter a valid two-letter country code."),
   timeZone: z.string().trim().refine(isIanaTimeZone, "Choose a valid IANA timezone."),
 };
@@ -98,6 +98,8 @@ export const createEmployeeSchema = z.object({
   employeeCode: z.string().trim().min(1, "Employee ID is required.").max(50),
   ...employeeIdentityFields,
   ...organizationAssignmentsSchema,
+  supervisorId: organizationIdSchema,
+  managerId: organizationIdSchema,
   shiftId: shiftIdSchema,
   password: z.string().min(1, "An initial password is required.").refine(passwordWithinBcryptLimit, "Password must not exceed 72 UTF-8 bytes."),
 }).superRefine(({ countryCode, timeZone }, context) => validateLocation(countryCode, timeZone, context));
@@ -107,6 +109,8 @@ export const updateEmployeeSchema = z.object({
   employeeCode: optionalNullableText(50),
   ...employeeIdentityFields,
   ...organizationAssignmentsSchema,
+  supervisorId: organizationIdSchema,
+  managerId: organizationIdSchema,
   shiftId: shiftIdSchema,
   password: z.preprocess(
     (value) => value === "" ? undefined : value,

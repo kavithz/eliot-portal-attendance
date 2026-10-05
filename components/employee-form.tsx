@@ -15,8 +15,10 @@ type EmployeeFormValues = {
   departmentId: string | null;
   designationId: string | null;
   shiftId: string | null;
+  supervisorId: string | null;
+  managerId: string | null;
   email: string;
-  role: "EMPLOYEE" | "ADMIN";
+  role: "EMPLOYEE" | "ADMIN" | "DEPARTMENT_MANAGER" | "SUPERVISOR";
   countryCode: string;
   timeZone: string;
   profile: {
@@ -51,12 +53,16 @@ export function EmployeeForm({
   departments,
   designations,
   shifts,
+  supervisors,
+  managers,
 }: {
   employee?: EmployeeFormValues;
   defaultTimeZone?: string;
   departments: OrganizationOption[];
   designations: OrganizationOption[];
   shifts: OrganizationOption[];
+  supervisors: OrganizationOption[];
+  managers: OrganizationOption[];
 }) {
   const boundUpdateAction = employee ? updateEmployeeAction.bind(null, employee.id) : createEmployeeAction;
   const [state, formAction, pending] = useActionState<EmployeeActionState, FormData>(boundUpdateAction, null);
@@ -94,6 +100,20 @@ export function EmployeeForm({
           </select>
         </div>
         <div>
+          <label htmlFor="supervisorId" className="mb-2 block text-sm font-semibold">Supervisor</label>
+          <select id="supervisorId" name="supervisorId" defaultValue={employee?.supervisorId ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm">
+            <option value="">Unassigned</option>
+            {supervisors.map((supervisor) => <option key={supervisor.id} value={supervisor.id}>{supervisor.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="managerId" className="mb-2 block text-sm font-semibold">Department Manager</label>
+          <select id="managerId" name="managerId" defaultValue={employee?.managerId ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm">
+            <option value="">Unassigned</option>
+            {managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}
+          </select>
+        </div>
+        <div>
           <label htmlFor="nic" className="mb-2 block text-sm font-semibold">NIC</label>
           <input id="nic" name="nic" maxLength={120} defaultValue={employee?.nic ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm" />
         </div>
@@ -126,7 +146,9 @@ export function EmployeeForm({
           <label htmlFor="role" className="mb-2 block text-sm font-semibold">Role</label>
           <select id="role" name="role" required defaultValue={employee?.role ?? "EMPLOYEE"} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm">
             <option value="EMPLOYEE">Employee</option>
-            <option value="ADMIN">Admin</option>
+            <option value="SUPERVISOR">Supervisor</option>
+            <option value="DEPARTMENT_MANAGER">Department Manager</option>
+            <option value="ADMIN">Super Administrator</option>
           </select>
         </div>
         <div>

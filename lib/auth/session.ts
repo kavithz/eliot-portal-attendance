@@ -98,7 +98,7 @@ export async function getCurrentUser() {
 export async function requireUser() {
   const user = await getCurrentUser();
   if (!user) throw new AuthenticationError();
-  if (user.role === "EMPLOYEE" && (await getEmployeeProfileOnboardingStatus(user.id)).required) {
+  if (user.role !== "ADMIN" && (await getEmployeeProfileOnboardingStatus(user.id)).required) {
     throw new ProfileCompletionRequiredError();
   }
   return user;
@@ -113,7 +113,7 @@ export async function requireAdmin() {
 export async function requirePageUser() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  if (user.role === "EMPLOYEE" && (await getEmployeeProfileOnboardingStatus(user.id)).required) {
+  if (user.role !== "ADMIN" && (await getEmployeeProfileOnboardingStatus(user.id)).required) {
     redirect("/complete-profile");
   }
   return user;

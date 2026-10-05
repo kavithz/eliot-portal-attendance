@@ -3,7 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { EmployeeForm } from "@/components/employee-form";
 import { requireAdmin } from "@/lib/auth/session";
-import { getEmployee } from "@/lib/employees/service";
+import { getEmployee, listEmployeeReportingOptions } from "@/lib/employees/service";
 import { listOrganizationOptions } from "@/lib/organization/service";
 import { listShiftOptions } from "@/lib/shifts/service";
 
@@ -11,9 +11,10 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ e
   const admin = await requireAdmin();
   const { employeeId } = await params;
   let employee;
-  const [organizationOptions, shifts] = await Promise.all([
+  const [organizationOptions, shifts, reportingOptions] = await Promise.all([
     listOrganizationOptions(admin),
     listShiftOptions(admin),
+    listEmployeeReportingOptions(admin),
   ]);
   try {
     employee = await getEmployee(admin, employeeId);
@@ -39,12 +40,14 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ e
         departmentId: employee.departmentId,
         designationId: employee.designationId,
         shiftId: employee.shiftId,
+        supervisorId: employee.supervisorId,
+        managerId: employee.managerId,
         email: employee.user.email,
         role: employee.user.role,
         countryCode: employee.user.countryCode,
         timeZone: employee.user.timeZone,
         profile: employee.profile,
-      }} departments={organizationOptions.departments} designations={organizationOptions.designations} shifts={shifts} />
+      }} departments={organizationOptions.departments} designations={organizationOptions.designations} shifts={shifts} supervisors={reportingOptions.supervisors} managers={reportingOptions.managers} />
     </div>
   );
 }

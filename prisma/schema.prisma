@@ -150,6 +150,8 @@ model Employee {
   departmentId       String?
   designationId      String?
   shiftId            String?
+  supervisorId       String?
+  managerId          String?
   userId             String?   @unique
   profileCompletedAt DateTime? @db.Timestamptz(3)
   profileOnboardingRequired Boolean @default(false)
@@ -163,10 +165,16 @@ model Employee {
   department         Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   designation        Designation? @relation(fields: [designationId], references: [id], onDelete: Restrict)
   shift              Shift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  supervisor         Employee? @relation("EmployeeSupervisor", fields: [supervisorId], references: [id], onDelete: Restrict)
+  supervisedEmployees Employee[] @relation("EmployeeSupervisor")
+  manager            Employee? @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: Restrict)
+  managedEmployees   Employee[] @relation("EmployeeManager")
 
   @@index([departmentId])
   @@index([designationId])
   @@index([shiftId])
+  @@index([supervisorId])
+  @@index([managerId])
 }
 
 model Department {
@@ -321,6 +329,8 @@ model PasswordResetRateLimit {
 enum Role {
   EMPLOYEE
   ADMIN
+  DEPARTMENT_MANAGER
+  SUPERVISOR
 }
 
 enum WorkMode {
