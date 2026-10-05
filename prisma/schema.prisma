@@ -189,6 +189,13 @@ model Shift {
   employees Employee[]
 }
 
+model LeaveType {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
 model EmployeeProfile {
   employeeRecordId              String    @id
   permanentAddress              String?   @db.Text
