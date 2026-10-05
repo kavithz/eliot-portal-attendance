@@ -4,11 +4,13 @@ import { notFound } from "next/navigation";
 import { EmployeeForm } from "@/components/employee-form";
 import { requireAdmin } from "@/lib/auth/session";
 import { getEmployee } from "@/lib/employees/service";
+import { listOrganizationOptions } from "@/lib/organization/service";
 
 export default async function EditEmployeePage({ params }: { params: Promise<{ employeeId: string }> }) {
   const admin = await requireAdmin();
   const { employeeId } = await params;
   let employee;
+  const organizationOptions = await listOrganizationOptions(admin);
   try {
     employee = await getEmployee(admin, employeeId);
   } catch {
@@ -30,12 +32,14 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ e
         nic: employee.nic,
         epfId: employee.epfId,
         etfId: employee.etfId,
+        departmentId: employee.departmentId,
+        designationId: employee.designationId,
         email: employee.user.email,
         role: employee.user.role,
         countryCode: employee.user.countryCode,
         timeZone: employee.user.timeZone,
         profile: employee.profile,
-      }} />
+      }} departments={organizationOptions.departments} designations={organizationOptions.designations} />
     </div>
   );
 }

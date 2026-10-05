@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isIanaTimeZone } from "@/lib/attendance/timezone";
 import { passwordWithinBcryptLimit } from "@/lib/auth/password";
+import { organizationAssignmentsSchema } from "@/lib/organization/validation";
 
 const countryTimeZones: Record<string, string> = {
   LK: "Asia/Colombo",
@@ -95,6 +96,7 @@ export const createEmployeeSchema = z.object({
   ...employeeFields,
   employeeCode: z.string().trim().min(1, "Employee ID is required.").max(50),
   ...employeeIdentityFields,
+  ...organizationAssignmentsSchema,
   password: z.string().min(1, "An initial password is required.").refine(passwordWithinBcryptLimit, "Password must not exceed 72 UTF-8 bytes."),
 }).superRefine(({ countryCode, timeZone }, context) => validateLocation(countryCode, timeZone, context));
 
@@ -102,6 +104,7 @@ export const updateEmployeeSchema = z.object({
   ...employeeFields,
   employeeCode: optionalNullableText(50),
   ...employeeIdentityFields,
+  ...organizationAssignmentsSchema,
   password: z.preprocess(
     (value) => value === "" ? undefined : value,
     z.string().refine(passwordWithinBcryptLimit, "Password must not exceed 72 UTF-8 bytes.").optional(),

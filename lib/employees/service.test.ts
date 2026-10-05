@@ -18,6 +18,7 @@ import {
   writeEmployeeAuditEvent,
 } from "@/lib/employees/service";
 import { createEmployeeSchema } from "@/lib/employees/validation";
+import { OrganizationNotFoundError } from "@/lib/organization/service";
 
 const admin = { role: Role.ADMIN };
 const employeeInput = {
@@ -48,9 +49,15 @@ function createDatabaseStub() {
       return Object.fromEntries(Object.keys(select).map((key) => [key, storedEmployee?.[key]]));
     },
   };
+  const department = {
+    findUnique: async ({ where }: { where: { id: string } }) => where.id === "department-1" ? { id: where.id } : null,
+  };
+  const designation = {
+    findUnique: async ({ where }: { where: { id: string } }) => where.id === "designation-1" ? { id: where.id } : null,
+  };
 
   return {
-    database: { user } as never,
+    database: { user, department, designation } as never,
     getCreateData: () => createData,
     getCreateSelect: () => createSelect,
     getUpdateData: () => updateData,
@@ -69,7 +76,13 @@ describe("employee management", () => {
     assert.notEqual(stub.getCreateData()?.passwordHash, employeeInput.password);
     assert.equal(await verifyPassword(employeeInput.password, String(stub.getCreateData()?.passwordHash)), true);
     assert.deepEqual(stub.getCreateData()?.employee, {
-      create: { name: employeeInput.name, employeeId: employeeInput.employeeCode, profileOnboardingRequired: true },
+      create: {
+        name: employeeInput.name,
+        employeeId: employeeInput.employeeCode,
+        departmentId: null,
+        designationId: null,
+        profileOnboardingRequired: true,
+      },
     });
     assert.equal("nic" in (stub.getCreateData() ?? {}), false);
     assert.equal("epfId" in (stub.getCreateData() ?? {}), false);
@@ -139,7 +152,7 @@ describe("employee management", () => {
 
     assert.deepEqual(stub.getUpdateData()?.employee, {
       upsert: {
-        create: { name: "Updated Employee", employeeId: "EMP-1002", profileOnboardingRequired: false },
+        create: { name: "Updated Employee", employeeId: "EMP-1002", departmentId: null, designationId: null, profileOnboardingRequired: false },
         update: { name: "Updated Employee", employeeId: "EMP-1002" },
       },
     });
@@ -156,6 +169,8 @@ describe("employee management", () => {
         nic: "NIC-123",
         epfId: null,
         etfId: "ETF-456",
+        departmentId: null,
+        designationId: null,
         profileOnboardingRequired: true,
       },
     });
@@ -201,6 +216,69 @@ describe("employee management", () => {
         create: { permanentAddress: null },
         update: { permanentAddress: null },
       },
+    });
+  });
+
+  it("creates and updates optional Department and Designation assignments independently", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(admin, { ...employeeInput, departmentId: "department-1", designationId: "designation-1" }, stub.database);
+    assert.deepEqual((stub.getCreateData()?.employee as { create: Record<string, unknown> }).create, {
+      name: employeeInput.name,
+      employeeId: employeeInput.employeeCode,
+      departmentId: "department-1",
+      designationId: "designation-1",
+      profileOnboardingRequired: true,
+    });
+
+    await updateEmployee(admin, "employee-1", {
+      ...employeeInput,
+      password: "",
+      departmentId: null,
+      designationId: "designation-1",
+    }, stub.database);
+    const employeeUpdate = (stub.getUpdateData()?.employee as { upsert: { update: Record<string, unknown> } }).upsert.update;
+    assert.equal(employeeUpdate.departmentId, null);
+    assert.equal(employeeUpdate.designationId, "designation-1");
+  });
+
+  it("rejects nonexistent Department and Designation assignment IDs before writing", async () => {
+    const stub = createDatabaseStub();
+    for (const assignments of [{ departmentId: "missing" }, { designationId: "missing" }]) {
+      await assert.rejects(createEmployee(admin, { ...employeeInput, ...assignments }, stub.database), OrganizationNotFoundError);
+      await assert.rejects(updateEmployee(admin, "employee-1", {
+        ...employeeInput,
+        password: "",
+        ...assignments,
+      }, stub.database), OrganizationNotFoundError);
+    }
+    assert.equal(stub.getCreateData(), undefined);
+    assert.equal(stub.getUpdateData(), undefined);
+  });
+
+  it("keeps new and existing employees valid without Department or Designation assignments", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(admin, { ...employeeInput, departmentId: "", designationId: "" }, stub.database);
+    assert.equal((stub.getCreateData()?.employee as { create: Record<string, unknown> }).create.departmentId, null);
+    assert.equal((stub.getCreateData()?.employee as { create: Record<string, unknown> }).create.designationId, null);
+
+    await updateEmployee(admin, "employee-1", {
+      ...employeeInput,
+      password: "",
+      departmentId: "",
+      designationId: null,
+    }, stub.database);
+    const update = (stub.getUpdateData()?.employee as { upsert: { update: Record<string, unknown> } }).upsert.update;
+    assert.equal(update.departmentId, null);
+    assert.equal(update.designationId, null);
+  });
+
+  it("tracks Department and Designation assignment changes by field name only", async () => {
+    assert.deepEqual(changedEmployeeFieldNames(
+      { departmentId: null, designationId: "designation-1" },
+      { departmentId: "department-1", designationId: null },
+    ), ["departmentId", "designationId"]);
+    assert.deepEqual(employeeAuditMetadata(["departmentId", "designationId"]), {
+      changedFields: ["departmentId", "designationId"],
     });
   });
 

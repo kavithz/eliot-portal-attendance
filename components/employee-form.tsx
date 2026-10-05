@@ -12,6 +12,8 @@ type EmployeeFormValues = {
   nic: string | null;
   epfId: string | null;
   etfId: string | null;
+  departmentId: string | null;
+  designationId: string | null;
   email: string;
   role: "EMPLOYEE" | "ADMIN";
   countryCode: string;
@@ -40,7 +42,19 @@ type EmployeeFormValues = {
   } | null;
 };
 
-export function EmployeeForm({ employee, defaultTimeZone = "Asia/Colombo" }: { employee?: EmployeeFormValues; defaultTimeZone?: string }) {
+type OrganizationOption = { id: string; name: string };
+
+export function EmployeeForm({
+  employee,
+  defaultTimeZone = "Asia/Colombo",
+  departments,
+  designations,
+}: {
+  employee?: EmployeeFormValues;
+  defaultTimeZone?: string;
+  departments: OrganizationOption[];
+  designations: OrganizationOption[];
+}) {
   const boundUpdateAction = employee ? updateEmployeeAction.bind(null, employee.id) : createEmployeeAction;
   const [state, formAction, pending] = useActionState<EmployeeActionState, FormData>(boundUpdateAction, null);
 
@@ -54,6 +68,20 @@ export function EmployeeForm({ employee, defaultTimeZone = "Asia/Colombo" }: { e
         <div>
           <label htmlFor="employeeCode" className="mb-2 block text-sm font-semibold">Employee ID</label>
           <input id="employeeCode" name="employeeCode" required={!employee} maxLength={50} defaultValue={employee?.employeeCode ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm" />
+        </div>
+        <div>
+          <label htmlFor="departmentId" className="mb-2 block text-sm font-semibold">Department</label>
+          <select id="departmentId" name="departmentId" defaultValue={employee?.departmentId ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm">
+            <option value="">Unassigned</option>
+            {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="designationId" className="mb-2 block text-sm font-semibold">Designation</label>
+          <select id="designationId" name="designationId" defaultValue={employee?.designationId ?? ""} className="h-10 w-full rounded-md border border-[var(--line)] bg-white px-3 text-sm">
+            <option value="">Unassigned</option>
+            {designations.map((designation) => <option key={designation.id} value={designation.id}>{designation.name}</option>)}
+          </select>
         </div>
         <div>
           <label htmlFor="nic" className="mb-2 block text-sm font-semibold">NIC</label>

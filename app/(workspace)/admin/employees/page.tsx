@@ -59,6 +59,8 @@ export default async function AdminEmployeesPage({ searchParams }: { searchParam
                   <th className="px-4 py-3 font-semibold">NIC</th>
                   <th className="px-4 py-3 font-semibold">EPF</th>
                   <th className="px-4 py-3 font-semibold">ETF</th>
+                  <th className="px-4 py-3 font-semibold">Department</th>
+                  <th className="px-4 py-3 font-semibold">Designation</th>
                   <th className="px-4 py-3 font-semibold">Contact email</th>
                   <th className="px-4 py-3 font-semibold">Profile</th>
                   <th className="px-4 py-3 font-semibold">Account</th>
@@ -75,6 +77,8 @@ export default async function AdminEmployeesPage({ searchParams }: { searchParam
                       <td className="px-4 py-3 text-[var(--muted)]">{employee.nic ?? "—"}</td>
                       <td className="px-4 py-3 text-[var(--muted)]">{employee.epfId ?? "—"}</td>
                       <td className="px-4 py-3 text-[var(--muted)]">{employee.etfId ?? "—"}</td>
+                      <td className="px-4 py-3 text-[var(--muted)]">{employee.department?.name ?? "—"}</td>
+                      <td className="px-4 py-3 text-[var(--muted)]">{employee.designation?.name ?? "—"}</td>
                       <td className="px-4 py-3 text-[var(--muted)]">{employee.profile?.email ?? "—"}</td>
                       <td className="px-4 py-3">{profileState(employee.profileCompletedAt, employee.profileOnboardingRequired)}</td>
                       <td className="px-4 py-3">{employee.user ? employee.user.isActive ? "Active" : "Inactive" : "No account"}</td>
@@ -92,7 +96,7 @@ export default async function AdminEmployeesPage({ searchParams }: { searchParam
                 <li key={employee.id}>
                   <Link href={href} className="block space-y-3 px-4 py-4 hover:bg-zinc-50/70">
                     <div className="flex items-start justify-between gap-3"><span className="min-w-0"><span className="block truncate text-sm font-semibold">{employee.name}</span><span className="mt-1 block truncate text-xs text-[var(--muted)]">{employee.profile?.email ?? "No contact email"}</span></span><span className="shrink-0 text-xs text-[var(--muted)]">{employee.user ? employee.user.isActive ? "Active" : "Inactive" : "No account"}</span></div>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-[var(--muted)]"><span>ID: {employee.employeeId ?? "—"}</span><span>NIC: {employee.nic ?? "—"}</span><span>EPF: {employee.epfId ?? "—"}</span><span>ETF: {employee.etfId ?? "—"}</span><span className="col-span-2">Profile: {profileState(employee.profileCompletedAt, employee.profileOnboardingRequired)}</span></div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-[var(--muted)]"><span>ID: {employee.employeeId ?? "—"}</span><span>NIC: {employee.nic ?? "—"}</span><span>EPF: {employee.epfId ?? "—"}</span><span>ETF: {employee.etfId ?? "—"}</span><span>Department: {employee.department?.name ?? "—"}</span><span>Designation: {employee.designation?.name ?? "—"}</span><span className="col-span-2">Profile: {profileState(employee.profileCompletedAt, employee.profileOnboardingRequired)}</span></div>
                   </Link>
                 </li>
               );

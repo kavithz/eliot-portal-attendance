@@ -14,6 +14,7 @@ import {
   updateEmployee,
   writeEmployeeAuditEvent,
 } from "@/lib/employees/service";
+import { OrganizationNotFoundError } from "@/lib/organization/service";
 
 export type EmployeeActionState = { error: string } | null;
 
@@ -51,6 +52,8 @@ function employeeFormData(formData: FormData) {
     nic: formData.get("nic"),
     epfId: formData.get("epfId"),
     etfId: formData.get("etfId"),
+    departmentId: formData.get("departmentId"),
+    designationId: formData.get("designationId"),
     email: formData.get("email"),
     password: formData.get("password"),
     role: formData.get("role"),
@@ -67,6 +70,8 @@ function employeeAuditSnapshot(employee: NonNullable<Awaited<ReturnType<typeof l
     nic: employee.nic,
     epfId: employee.epfId,
     etfId: employee.etfId,
+    departmentId: employee.departmentId,
+    designationId: employee.designationId,
     loginEmail: employee.user?.email,
     role: employee.user?.role,
     isActive: employee.user?.isActive,
@@ -82,6 +87,7 @@ function loadAuditEmployee(database: typeof prisma | Parameters<Parameters<typeo
 
 function actionError(error: unknown) {
   if (error instanceof EmployeeDuplicateError) return error.message;
+  if (error instanceof OrganizationNotFoundError) return error.message;
   if (error instanceof z.ZodError) return error.issues[0]?.message ?? "Check the employee details and try again.";
   console.error("Employee management action failed", error instanceof Error ? error.name : "Unknown error");
   return "The employee could not be saved. Try again shortly.";
@@ -97,7 +103,7 @@ export async function createEmployeeAction(_state: EmployeeActionState, formData
         employeeId: created.id,
         actorId: admin.id,
         actionType: "EMPLOYEE_CREATED",
-        changedFields: ["name", "employeeId", "nic", "epfId", "etfId", "loginEmail", "role", "countryCode", "timeZone"],
+        changedFields: ["name", "employeeId", "nic", "epfId", "etfId", "departmentId", "designationId", "loginEmail", "role", "countryCode", "timeZone"],
       });
       return created;
     });

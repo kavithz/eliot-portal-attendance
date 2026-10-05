@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { EmployeeForm } from "@/components/employee-form";
+import { requireAdmin } from "@/lib/auth/session";
 import { readAppSettings } from "@/lib/attendance/qa-fixes";
+import { listOrganizationOptions } from "@/lib/organization/service";
 
 export default async function NewEmployeePage() {
-  const settings = await readAppSettings();
+  const admin = await requireAdmin();
+  const [settings, organizationOptions] = await Promise.all([readAppSettings(), listOrganizationOptions(admin)]);
   return (
     <div className="space-y-6">
       <div>
@@ -12,7 +15,7 @@ export default async function NewEmployeePage() {
         <p className="mt-5 text-sm font-medium text-[var(--blue)]">Administration</p>
         <h1 className="mt-1 text-2xl font-semibold sm:text-[28px]">Add employee</h1>
       </div>
-      <EmployeeForm defaultTimeZone={settings.defaultTimeZone} />
+      <EmployeeForm defaultTimeZone={settings.defaultTimeZone} departments={organizationOptions.departments} designations={organizationOptions.designations} />
     </div>
   );
 }

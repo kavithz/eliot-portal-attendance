@@ -145,6 +145,8 @@ model Employee {
   nic                String?   @unique
   epfId              String?
   etfId              String?
+  departmentId       String?
+  designationId      String?
   userId             String?   @unique
   profileCompletedAt DateTime? @db.Timestamptz(3)
   profileOnboardingRequired Boolean @default(false)
@@ -153,6 +155,27 @@ model Employee {
   user               User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   profile            EmployeeProfile?
   documents          EmployeeDocument[]
+  department         Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  designation        Designation? @relation(fields: [designationId], references: [id], onDelete: Restrict)
+
+  @@index([departmentId])
+  @@index([designationId])
+}
+
+model Department {
+  id        String     @id @default(cuid())
+  name      String
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(3)
+  employees Employee[]
+}
+
+model Designation {
+  id        String     @id @default(cuid())
+  name      String
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(3)
+  employees Employee[]
 }
 
 model EmployeeProfile {
