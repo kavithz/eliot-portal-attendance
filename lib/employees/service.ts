@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { createEmployeeSchema, updateEmployeeSchema, type AdminEmployeeProfilePatch } from "@/lib/employees/validation";
+import { employeeProfileRequiredFields } from "@/lib/employees/profile-requirements";
 
 export const publicEmployeeSelect = {
   id: true,
@@ -238,6 +239,7 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
   const { password, nic, epfId, etfId, profile: profilePatch, ...employeeFields } = parsed;
   const passwordHash = password ? await hashPassword(password) : undefined;
   const profileData = definedProfileFields(profilePatch);
+  const profileNeedsCompletion = employeeProfileRequiredFields.some((field) => profileData[field] === null);
   const employeeScalars = {
     name: employeeFields.name,
     ...(employeeFields.employeeCode !== undefined ? { employeeId: employeeFields.employeeCode } : {}),
@@ -247,6 +249,7 @@ export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, i
   };
   const employeeUpdate = {
     ...employeeScalars,
+    ...(profileNeedsCompletion ? { profileOnboardingRequired: true, profileCompletedAt: null } : {}),
     ...(Object.keys(profileData).length > 0
       ? { profile: { upsert: { create: profileData, update: profileData } } }
       : {}),

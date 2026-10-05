@@ -183,6 +183,27 @@ describe("employee management", () => {
     assert.equal(stub.getUpdateData()?.email, employeeInput.email);
   });
 
+  it("reopens profile completion when an admin clears a mandatory profile field", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(admin, employeeInput, stub.database);
+
+    await updateEmployee(admin, "employee-1", {
+      ...employeeInput,
+      password: "",
+      profile: { permanentAddress: "" },
+    }, stub.database);
+
+    const employeeUpdate = (stub.getUpdateData()?.employee as { upsert: { update: Record<string, unknown> } }).upsert.update;
+    assert.equal(employeeUpdate.profileOnboardingRequired, true);
+    assert.equal(employeeUpdate.profileCompletedAt, null);
+    assert.deepEqual(employeeUpdate.profile, {
+      upsert: {
+        create: { permanentAddress: null },
+        update: { permanentAddress: null },
+      },
+    });
+  });
+
   it("rejects invalid optional identity/profile fields on the server", async () => {
     const stub = createDatabaseStub();
     await assert.rejects(createEmployee(admin, { ...employeeInput, nic: "x".repeat(121) }, stub.database), { name: "ZodError" });

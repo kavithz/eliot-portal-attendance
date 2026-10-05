@@ -29,8 +29,8 @@ const requiredFields: ProfileField[] = [
 ];
 
 const spouseFields: ProfileField[] = [
-  { name: "spouseName", label: "Spouse name", maxLength: 120 },
-  { name: "spouseId", label: "Spouse ID", maxLength: 120 },
+  { name: "spouseName", label: "Spouse name", maxLength: 120, required: true },
+  { name: "spouseId", label: "Spouse ID", maxLength: 120, required: true },
 ];
 
 const motherFields: ProfileField[] = [
@@ -76,7 +76,7 @@ export function EmployeeProfileCompletionForm({ contactEmail }: { contactEmail: 
       <section className="space-y-4 border-t border-[var(--line)] pt-5" aria-labelledby="spouse-details-title">
         <div>
           <h2 id="spouse-details-title" className="text-base font-semibold">Spouse details</h2>
-          <p className="mt-1 text-xs text-[var(--muted)]">Required when marital status is Married.</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Both fields are required.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">{spouseFields.map((field) => <Field key={field.name} field={field} />)}</div>
       </section>

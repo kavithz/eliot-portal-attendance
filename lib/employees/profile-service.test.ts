@@ -22,6 +22,8 @@ const validProfile = {
   linkedInId: "employee-profile-id",
   dateOfBirth: "1990-04-12",
   maritalStatus: "Single",
+  spouseName: "Spouse Name",
+  spouseId: "SPOUSE-100",
 };
 
 function createProfileDatabase(options: { userId?: string; onboardingRequired?: boolean; profileCompletedAt?: Date | null } = {}) {
@@ -126,22 +128,17 @@ describe("employee profile validation", () => {
     assert.equal(parsed.fatherName, null);
     assert.equal(parsed.fatherId, null);
     assert.equal(parsed.fatherContactNumber, null);
-    assert.equal(parsed.spouseName, null);
-    assert.equal(parsed.spouseId, null);
+    assert.equal(parsed.spouseName, "Spouse Name");
+    assert.equal(parsed.spouseId, "SPOUSE-100");
   });
 
-  it("requires spouse name and ID only when marital status is married", () => {
-    const married = employeeProfileCompletionSchema.safeParse({ ...validProfile, maritalStatus: " Married " });
-    assert.equal(married.success, false);
-
-    const completeMarried = employeeProfileCompletionSchema.parse({
-      ...validProfile,
-      maritalStatus: "Married",
-      spouseName: "Spouse Name",
-      spouseId: "SPOUSE-100",
-    });
-    assert.equal(completeMarried.spouseName, "Spouse Name");
-    assert.equal(completeMarried.spouseId, "SPOUSE-100");
+  it("requires spouse name and ID regardless of marital status", () => {
+    for (const maritalStatus of ["Single", "Married"]) {
+      assert.equal(employeeProfileCompletionSchema.safeParse({ ...validProfile, maritalStatus, spouseName: "" }).success, false);
+      assert.equal(employeeProfileCompletionSchema.safeParse({ ...validProfile, maritalStatus, spouseId: "" }).success, false);
+      assert.equal(employeeProfileCompletionSchema.safeParse({ ...validProfile, maritalStatus, spouseName: undefined }).success, false);
+      assert.equal(employeeProfileCompletionSchema.safeParse({ ...validProfile, maritalStatus, spouseId: undefined }).success, false);
+    }
   });
 
   it("rejects invalid dates and future dates", () => {

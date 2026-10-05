@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { employeeProfileRequiredFields } from "@/lib/employees/profile-requirements";
 
 function nullableText(maxLength: number) {
   return z.preprocess(
@@ -35,8 +36,8 @@ export const employeeProfileCompletionSchema = z.object({
   linkedInId: z.string().trim().min(1, "LinkedIn ID is required.").max(512),
   dateOfBirth: dateOfBirthSchema,
   maritalStatus: z.string().trim().min(1, "Marital status is required.").max(50),
-  spouseName: nullableText(120),
-  spouseId: nullableText(120),
+  spouseName: z.string().trim().min(1, "Spouse name is required.").max(120),
+  spouseId: z.string().trim().min(1, "Spouse ID is required.").max(120),
   motherName: nullableText(120),
   motherId: nullableText(120),
   motherContactNumber: nullableText(64),
@@ -44,17 +45,12 @@ export const employeeProfileCompletionSchema = z.object({
   fatherId: nullableText(120),
   fatherContactNumber: nullableText(64),
 }).superRefine((profile, context) => {
-  if (profile.maritalStatus.toLowerCase() === "married") {
-    if (!profile.spouseName) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["spouseName"], message: "Spouse name is required when marital status is married." });
-    }
-    if (!profile.spouseId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["spouseId"], message: "Spouse ID is required when marital status is married." });
+  for (const field of employeeProfileRequiredFields) {
+    if (profile[field] === null || profile[field] === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required.` });
     }
   }
-}).transform((profile) => profile.maritalStatus.toLowerCase() === "married"
-  ? profile
-  : { ...profile, spouseName: null, spouseId: null });
+});
 
 type ProfileStatusDatabase = Pick<PrismaClient, "employee">;
 type EmployeeProfileDatabase = Pick<PrismaClient, "employee" | "employeeProfile" | "attendanceAuditLog" | "$transaction">;
