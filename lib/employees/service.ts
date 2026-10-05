@@ -116,7 +116,12 @@ export function employeeAuditMetadata(changedFields: string[]) {
 
 export async function writeEmployeeAuditEvent(
   database: Pick<PrismaClient, "attendanceAuditLog">,
-  input: { employeeId: string; actorId: string; actionType: "EMPLOYEE_CREATED" | "EMPLOYEE_UPDATED"; changedFields: string[] },
+  input: {
+    employeeId: string | null;
+    actorId: string;
+    actionType: "EMPLOYEE_CREATED" | "EMPLOYEE_UPDATED" | "EMPLOYEE_DOCUMENT_UPLOADED";
+    changedFields: string[];
+  },
 ) {
   await database.attendanceAuditLog.create({
     data: {
@@ -127,7 +132,9 @@ export async function writeEmployeeAuditEvent(
       newValues: employeeAuditMetadata(input.changedFields),
       reason: input.actionType === "EMPLOYEE_CREATED"
         ? "Administrator created an employee account; field values are omitted for privacy."
-        : "Administrator updated employee identity or profile fields; values are omitted for privacy.",
+        : input.actionType === "EMPLOYEE_DOCUMENT_UPLOADED"
+          ? "An authorized user uploaded an employee document; filenames and contents are omitted for privacy."
+          : "Administrator updated employee identity or profile fields; values are omitted for privacy.",
     },
     select: { id: true },
   });

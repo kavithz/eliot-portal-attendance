@@ -37,3 +37,27 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel and Neon setup, environment va
 ## Admin employee management
 
 Administrators can search and page through Employee records, inspect linked profile information, and update employee identity/statutory IDs and profile fields. Admin routes and actions require the existing `ADMIN` role. Login email remains on `User`; profile contact email remains on `EmployeeProfile`. Attendance continues to reference `User.id`, and audit events record changed field names without storing personal values. This increment adds no migration; the existing Employee and EmployeeProfile migrations must already be applied for these screens to work.
+
+## Employee document management
+
+Employee documents are managed by administrators from **Admin → Employees → employee → Documents**. The page lists each document's type, original filename, size, upload time, optional expiry date, and uploader, and offers a protected download. The document API and service enforce administrator access for employee records; service-level employee ownership checks remain in place for any authenticated employee API use. There is no employee-facing documents page.
+
+Uploads pass through a private storage interface (`PrivateDocumentStorage`). The S3 adapter stores bytes under opaque, generated object keys and uses the AWS SDK default credential provider chain; the application does not return storage keys, bucket details, or public object URLs. Files are streamed from multipart requests with configured byte and part limits, checked against the configured extension allowlist and detected content, and given a normalized safe filename. DOCX files are additionally checked for required package entries. Invalid types, mismatched contents, empty files, unsafe filenames, and oversized files are rejected server-side. The database metadata and privacy-safe audit event are committed together; if that transaction fails, the newly stored object is removed.
+
+Configure these values in the server environment before enabling uploads; the application intentionally does not invent a size limit or extension allowlist:
+
+| Name | Purpose |
+| --- | --- |
+| `EMPLOYEE_DOCUMENT_MAX_BYTES` | Required maximum permitted upload size in bytes. |
+| `EMPLOYEE_DOCUMENT_ALLOWED_EXTENSIONS` | Required comma-separated extension allowlist (set only extensions approved by your organization). |
+| `EMPLOYEE_DOCUMENTS_S3_BUCKET` | Required name of the private S3 bucket. |
+| `AWS_REGION` | Required AWS region for the bucket and SDK client. |
+
+When the S3 bucket or policy configuration is missing, the page reports uploads as unavailable and the API rejects uploads rather than reporting success. AWS credentials are resolved by the SDK default provider chain. Tests use `MockPrivateDocumentStorage` and do not require AWS:
+
+```sh
+node --conditions=react-server --import tsx --test lib/documents/*.test.ts
+npm test
+```
+
+The `20261003000004_employee_documents` Prisma migration must be applied through the deployment's reviewed migration process before the feature can read or write its metadata. AWS deployment work remains: provision a private bucket with public access blocked, grant the runtime identity least-privilege access to the intended bucket/prefix, configure its region and credentials/identity, and establish organization-approved retention, backup, monitoring, and recovery procedures. AWS integration has not been deployment-tested here.

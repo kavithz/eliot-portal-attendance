@@ -30,6 +30,7 @@ model User {
   notifications       Notification[]
   passwordResetTokens PasswordResetToken[]
   employee            Employee?
+  uploadedEmployeeDocuments EmployeeDocument[] @relation("EmployeeDocumentUploader")
 
   @@index([role])
 }
@@ -151,6 +152,7 @@ model Employee {
   updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
   user               User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   profile            EmployeeProfile?
+  documents          EmployeeDocument[]
 }
 
 model EmployeeProfile {
@@ -178,6 +180,24 @@ model EmployeeProfile {
   createdAt                     DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt                     DateTime  @updatedAt @db.Timestamptz(3)
   employee                      Employee  @relation(fields: [employeeRecordId], references: [id], onDelete: Cascade)
+}
+
+model EmployeeDocument {
+  id               String               @id @default(cuid())
+  employeeId       String
+  type             EmployeeDocumentType
+  originalFilename String               @db.VarChar(255)
+  storageKey       String               @unique
+  contentType      String               @db.VarChar(255)
+  sizeBytes        BigInt
+  uploadedAt       DateTime             @default(now()) @db.Timestamptz(3)
+  expiresAt        DateTime?            @db.Date
+  uploadedById     String?
+  employee         Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  uploadedBy       User?                @relation("EmployeeDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, uploadedAt])
+  @@index([expiresAt])
 }
 
 model PasswordResetToken {
@@ -217,4 +237,16 @@ enum AttendanceCorrectionStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+
+enum EmployeeDocumentType {
+  APPOINTMENT_LETTER
+  EMPLOYMENT_AGREEMENT
+  NIC_COPY
+  PASSPORT
+  CERTIFICATE
+  CONTRACT
+  INTERNSHIP_AGREEMENT
+  OTHER
 }

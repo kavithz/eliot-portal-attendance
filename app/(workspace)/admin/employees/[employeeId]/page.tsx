@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, Pencil } from "lucide-react";
+import { ChevronLeft, FileText, Pencil } from "lucide-react";
 import { requireAdmin } from "@/lib/auth/session";
 import { EmployeeStatusForm } from "@/components/employee-status-form";
 import { getEmployee } from "@/lib/employees/service";
@@ -29,7 +29,10 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
         <Link href="/admin/employees" className="inline-flex items-center gap-1 text-sm font-medium text-[var(--muted)] hover:text-[var(--ink)]"><ChevronLeft size={16} aria-hidden="true" /> Employees</Link>
         <div className="mt-5 flex flex-wrap items-end justify-between gap-3">
           <div><p className="text-sm font-medium text-[var(--blue)]">Employee details</p><h1 className="mt-1 text-2xl font-semibold sm:text-[28px]">{employee.name}</h1><p className="mt-2 text-sm text-[var(--muted)]">Contact: {valueOrMissing(employee.profile?.email)}</p></div>
-          {employee.user && <Link href={`/admin/employees/${employee.user.id}/edit`} className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3.5 text-sm font-medium shadow-sm hover:bg-zinc-50"><Pencil size={15} aria-hidden="true" /> Edit employee</Link>}
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/admin/employees/${employee.id}/documents`} className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3.5 text-sm font-medium shadow-sm hover:bg-zinc-50"><FileText size={15} aria-hidden="true" /> Documents</Link>
+            {employee.user && <Link href={`/admin/employees/${employee.user.id}/edit`} className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3.5 text-sm font-medium shadow-sm hover:bg-zinc-50"><Pencil size={15} aria-hidden="true" /> Edit employee</Link>}
+          </div>
         </div>
       </div>
       <section className="max-w-3xl rounded-lg border border-[var(--line)] bg-white shadow-sm">
