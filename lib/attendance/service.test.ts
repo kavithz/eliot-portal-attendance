@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { Prisma } from "@prisma/client";
 import { applyAttendanceAction, AttendanceStateError } from "./service";
 import { attendanceActionSchema, type AttendanceAction } from "./validation";
 import { getEmployeeLocalDayWindow } from "./timezone";
@@ -12,9 +13,23 @@ type StoredSession = {
   endAt: Date | null;
 };
 
-function createDatabase(initialSessions: StoredSession[] = [], timeZone = "Asia/Colombo") {
+function createDatabase(
+  initialSessions: StoredSession[] = [],
+  timeZone = "Asia/Colombo",
+  hasEmployeeRecord = true,
+) {
   const sessions = [...initialSessions];
+  const rawPunches: Array<{
+    id: string;
+    employeeId: string;
+    timestamp: Date;
+    punchType: "IN" | "OUT";
+    source: string;
+    deviceId: null;
+    location: null;
+  }> = [];
   let nextId = 1;
+  let nextRawId = 1;
   let lockTail: Promise<void> = Promise.resolve();
 
   const database = {
@@ -58,6 +73,22 @@ function createDatabase(initialSessions: StoredSession[] = [], timeZone = "Asia/
             return { sessions: [session] };
           },
         },
+        attendanceRaw: {
+          create: async ({ data }: { data: Omit<(typeof rawPunches)[number], "id"> & { location: unknown } }) => {
+            const location = data.location === Prisma.DbNull ? null : data.location;
+            if (location !== null) throw new Error("Unexpected attendance location.");
+            const punch = {
+              id: `raw-${nextRawId++}`,
+              ...data,
+              location,
+            };
+            rawPunches.push(punch);
+            return punch;
+          },
+        },
+        employee: {
+          findUnique: async () => hasEmployeeRecord ? { id: "employee-record-1" } : null,
+        },
         user: {
           findUnique: async () => ({ timeZone }),
         },
@@ -71,7 +102,7 @@ function createDatabase(initialSessions: StoredSession[] = [], timeZone = "Asia/
     },
   };
 
-  return { database: database as never, sessions };
+  return { database: database as never, sessions, rawPunches };
 }
 
 function activeSession(id: string): StoredSession {
@@ -91,6 +122,8 @@ describe("employee attendance transitions", () => {
     assert.ok(rejection?.reason instanceof AttendanceStateError);
     assert.equal(stub.sessions.length, 1);
     assert.equal(stub.sessions.filter(({ endAt }) => endAt === null).length, 1);
+    assert.equal(stub.rawPunches.length, 1);
+    assert.equal(stub.rawPunches[0].punchType, "IN");
   });
 
   it("serializes concurrent OUT actions so only one request closes the session", async () => {
@@ -104,6 +137,65 @@ describe("employee attendance transitions", () => {
     const rejection = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     assert.ok(rejection?.reason instanceof AttendanceStateError);
     assert.equal(stub.sessions.filter(({ endAt }) => endAt === null).length, 0);
+    assert.equal(stub.rawPunches.length, 1);
+    assert.equal(stub.rawPunches[0].punchType, "OUT");
+  });
+
+  it("persists accepted IN and OUT evidence with the exact session timestamps and capture metadata", async () => {
+    const stub = createDatabase();
+    const startedAt = new Date("2026-06-15T02:30:17.123Z");
+    const endedAt = new Date("2026-06-15T11:30:42.456Z");
+
+    const started = await applyAttendanceAction("user-1", "IN", stub.database, startedAt);
+    const acceptedInPunch = structuredClone(stub.rawPunches[0]);
+    const ended = await applyAttendanceAction("user-1", "OUT", stub.database, endedAt);
+
+    assert.equal(started.startAt.toISOString(), startedAt.toISOString());
+    assert.equal(ended.endAt?.toISOString(), endedAt.toISOString());
+    assert.deepEqual(stub.rawPunches[0], acceptedInPunch);
+    assert.deepEqual(stub.rawPunches.map(({ employeeId, timestamp, punchType, source, deviceId, location }) => ({
+      employeeId,
+      timestamp: timestamp.toISOString(),
+      punchType,
+      source,
+      deviceId,
+      location,
+    })), [
+      {
+        employeeId: "employee-record-1",
+        timestamp: startedAt.toISOString(),
+        punchType: "IN",
+        source: "WEB",
+        deviceId: null,
+        location: null,
+      },
+      {
+        employeeId: "employee-record-1",
+        timestamp: endedAt.toISOString(),
+        punchType: "OUT",
+        source: "WEB",
+        deviceId: null,
+        location: null,
+      },
+    ]);
+    assert.equal(stub.sessions.length, 1);
+    assert.equal(stub.sessions[0].startAt.toISOString(), stub.rawPunches[0].timestamp.toISOString());
+    assert.equal(stub.sessions[0].endAt?.toISOString(), stub.rawPunches[1].timestamp.toISOString());
+  });
+
+  it("does not create raw evidence for rejected actions or users without a linked Employee", async () => {
+    const noEmployee = createDatabase([], "Asia/Colombo", false);
+    await assert.rejects(
+      applyAttendanceAction("user-without-employee", "IN", noEmployee.database),
+      /Employee record is required/,
+    );
+    assert.equal(noEmployee.sessions.length, 0);
+    assert.equal(noEmployee.rawPunches.length, 0);
+
+    const duplicateStart = createDatabase([activeSession("already-open")]);
+    await assert.rejects(applyAttendanceAction("employee-1", "IN", duplicateStart.database), AttendanceStateError);
+    await assert.rejects(applyAttendanceAction("employee-1", "WFH_OUT", duplicateStart.database), /different work mode/);
+    assert.deepEqual(duplicateStart.rawPunches, []);
   });
 
   it("serializes competing same-day starts after a completed session", async () => {

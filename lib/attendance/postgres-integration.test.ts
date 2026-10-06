@@ -15,6 +15,7 @@ it("serializes real concurrent actions and admin reopen corrections in PostgreSQ
 
   const unique = randomUUID();
   let employeeId: string | undefined;
+  let employeeRecordId: string | undefined;
   try {
     const employee = await prisma.user.create({
       data: {
@@ -29,6 +30,11 @@ it("serializes real concurrent actions and admin reopen corrections in PostgreSQ
       select: { id: true },
     });
     employeeId = employee.id;
+    const employeeRecord = await prisma.employee.create({
+      data: { name: "Step 10 concurrency test", userId: employee.id, employeeId: `STEP10-RECORD-${unique}` },
+      select: { id: true },
+    });
+    employeeRecordId = employeeRecord.id;
     const actionTime = new Date();
 
     const concurrentStarts = await Promise.allSettled([
@@ -44,6 +50,7 @@ it("serializes real concurrent actions and admin reopen corrections in PostgreSQ
       select: { id: true },
     });
     assert.equal((await openSessions()).length, 1);
+    assert.equal(await prisma.attendanceRaw.count({ where: { employeeId: employeeRecord.id, punchType: "IN" } }), 1);
 
     const concurrentEnds = await Promise.allSettled([
       applyAttendanceAction(employeeId, "OUT", prisma, actionTime),
@@ -53,6 +60,8 @@ it("serializes real concurrent actions and admin reopen corrections in PostgreSQ
     const rejectedEnd = concurrentEnds.find((result): result is PromiseRejectedResult => result.status === "rejected");
     assert.ok(rejectedEnd?.reason instanceof AttendanceStateError);
     assert.equal((await openSessions()).length, 0);
+    assert.equal(await prisma.attendanceRaw.count({ where: { employeeId: employeeRecord.id, punchType: "OUT" } }), 1);
+    assert.equal(await prisma.attendanceRaw.count({ where: { employeeId: employeeRecord.id } }), 2);
 
     const completedSession = await prisma.workSession.findFirst({
       where: { record: { employeeId }, endAt: { not: null } },
@@ -83,6 +92,10 @@ it("serializes real concurrent actions and admin reopen corrections in PostgreSQ
     await applyAttendanceAction(employeeId, "WFH_IN", prisma, nextLocalDay);
     assert.equal((await openSessions()).length, 1);
   } finally {
+    if (employeeRecordId) {
+      await prisma.attendanceRaw.deleteMany({ where: { employeeId: employeeRecordId } });
+      await prisma.employee.delete({ where: { id: employeeRecordId } });
+    }
     if (employeeId) await prisma.user.delete({ where: { id: employeeId } });
     await prisma.$disconnect();
   }

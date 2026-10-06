@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { AttendanceAction } from "@/lib/attendance/validation";
 import { groupSessionsByEmployeeLocalDay } from "@/lib/attendance/history";
@@ -23,6 +23,8 @@ export async function lockAttendanceEmployee(tx: Prisma.TransactionClient, emplo
 
 type AttendanceWriteDatabase = Pick<typeof prisma, "$transaction">;
 
+const attendanceCaptureSource = "WEB";
+
 export async function applyAttendanceAction(
   employeeId: string,
   action: AttendanceAction,
@@ -40,6 +42,13 @@ export async function applyAttendanceAction(
       select: { timeZone: true },
     });
     if (!employee) throw new AttendanceStateError("Employee account was not found.");
+    const employeeRecord = await tx.employee.findUnique({
+      where: { userId: employeeId },
+      select: { id: true },
+    });
+    if (!employeeRecord) {
+      throw new AttendanceStateError("An Employee record is required before recording attendance.");
+    }
 
     const activeSession = await tx.workSession.findFirst({
       where: { record: { employeeId }, endAt: null },
@@ -76,6 +85,17 @@ export async function applyAttendanceAction(
         },
         include: { sessions: true },
       });
+      await tx.attendanceRaw.create({
+        data: {
+          employeeId: employeeRecord.id,
+          timestamp: startedAt,
+          punchType: "IN",
+          source: attendanceCaptureSource,
+          deviceId: null,
+          location: Prisma.DbNull,
+        },
+        select: { id: true },
+      });
       return record.sessions[0];
     }
 
@@ -91,10 +111,22 @@ export async function applyAttendanceAction(
       throw new AttendanceStateError("The session cannot end before it started.");
     }
 
-    return tx.workSession.update({
+    const updatedSession = await tx.workSession.update({
       where: { id: activeSession.id },
       data: { endAt: endedAt },
     });
+    await tx.attendanceRaw.create({
+      data: {
+        employeeId: employeeRecord.id,
+        timestamp: endedAt,
+        punchType: "OUT",
+        source: attendanceCaptureSource,
+        deviceId: null,
+        location: Prisma.DbNull,
+      },
+      select: { id: true },
+    });
+    return updatedSession;
   });
 }
 
