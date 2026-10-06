@@ -26,6 +26,7 @@ model User {
   auditEntries        AttendanceAuditLog[]
   correctionRequests  AttendanceCorrectionRequest[]
   reviewedCorrections AttendanceCorrectionRequest[] @relation("AttendanceCorrectionReviewer")
+  requestedAttendanceCorrections AttendanceCorrectionRequest[] @relation("AttendanceCorrectionRequester")
   records             AttendanceRecord[]
   notifications       Notification[]
   passwordResetTokens PasswordResetToken[]
@@ -78,6 +79,7 @@ model AttendanceDaily {
   overtimeHours Decimal?  @db.Decimal(8, 2)
   employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   shift         Shift?    @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  correctionRequests AttendanceCorrectionRequest[]
 
   @@index([employeeId, date])
   @@index([shiftId, date])
@@ -118,9 +120,16 @@ model AttendanceCorrectionRequest {
   resolvedAt       DateTime?
   createdAt        DateTime                   @default(now())
   updatedAt        DateTime                   @updatedAt
+  dailyAttendanceId String?
+  requesterId       String?
+  originalValues    Json?
+  requestedValues   Json?
   employee         User                       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   reviewedBy       User?                      @relation("AttendanceCorrectionReviewer", fields: [reviewedById], references: [id])
+  requester        User?                      @relation("AttendanceCorrectionRequester", fields: [requesterId], references: [id], onDelete: Restrict)
   session          WorkSession?               @relation(fields: [sessionId], references: [id])
+  dailyAttendance  AttendanceDaily?           @relation(fields: [dailyAttendanceId], references: [id], onDelete: Restrict)
+  auditLogs        AttendanceAuditLog[]
 
   @@index([employeeId, status])
   @@index([status, requestedAt])
@@ -141,6 +150,7 @@ model AttendanceAuditLog {
   actor               User?        @relation("AttendanceAuditActor", fields: [actorId], references: [id])
   employee            User?        @relation(fields: [employeeId], references: [id])
   session             WorkSession? @relation(fields: [sessionId], references: [id])
+  correctionRequest   AttendanceCorrectionRequest? @relation(fields: [correctionRequestId], references: [id], onDelete: Restrict)
 
   @@index([employeeId, createdAt])
   @@index([sessionId, createdAt])
@@ -376,6 +386,7 @@ model PasswordResetRateLimit {
 enum Role {
   EMPLOYEE
   ADMIN
+  HR_ADMINISTRATOR
   DEPARTMENT_MANAGER
   SUPERVISOR
 }
