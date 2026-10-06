@@ -49,6 +49,41 @@ model AttendanceRecord {
   @@index([employeeId, workDate])
 }
 
+model AttendanceRaw {
+  id         String              @id @default(cuid())
+  employeeId String
+  timestamp  DateTime            @db.Timestamptz(3)
+  punchType  AttendancePunchType
+  deviceId   String?
+  source     String
+  location   Json?
+  createdAt  DateTime            @default(now()) @db.Timestamptz(3)
+  employee   Employee            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, timestamp])
+  @@map("attendance_raw")
+}
+
+model AttendanceDaily {
+  id            String    @id @default(cuid())
+  employeeId    String
+  date          DateTime  @db.Date
+  shiftId       String?
+  firstIn       DateTime? @db.Timestamptz(3)
+  lastOut       DateTime? @db.Timestamptz(3)
+  workingHours  Decimal?  @db.Decimal(8, 2)
+  lateMinutes   Int?
+  earlyMinutes  Int?
+  status        String?
+  overtimeHours Decimal?  @db.Decimal(8, 2)
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  shift         Shift?    @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, date])
+  @@index([shiftId, date])
+  @@map("attendance_daily")
+}
+
 model WorkSession {
   id                 String                        @id @default(cuid())
   recordId           String
@@ -169,6 +204,8 @@ model Employee {
   supervisedEmployees Employee[] @relation("EmployeeSupervisor")
   manager            Employee? @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: Restrict)
   managedEmployees   Employee[] @relation("EmployeeManager")
+  attendanceRaw      AttendanceRaw[]
+  attendanceDaily    AttendanceDaily[]
 
   @@index([departmentId])
   @@index([designationId])
@@ -196,10 +233,20 @@ model Designation {
 model Shift {
   id        String     @id @default(cuid())
   name      String
+  startTime   DateTime?      @db.Time(0)
+  endTime     DateTime?      @db.Time(0)
+  breakDurationMinutes          Int?
+  gracePeriodMinutes            Int?
+  lateThresholdMinutes          Int?
+  earlyDepartureThresholdMinutes Int?
+  minimumWorkingHours           Decimal?       @db.Decimal(8, 2)
+  overtimeEligible              Boolean?
+  roundingRules                 Json?
   workingDays ShiftWeekday[] @default([])
   createdAt DateTime   @default(now()) @db.Timestamptz(3)
   updatedAt DateTime   @updatedAt @db.Timestamptz(3)
   employees Employee[]
+  attendanceDaily AttendanceDaily[]
 }
 
 model LeaveType {
@@ -336,6 +383,11 @@ enum Role {
 enum WorkMode {
   OFFICE
   WFH
+}
+
+enum AttendancePunchType {
+  IN
+  OUT
 }
 
 enum AttendanceCorrectionStatus {
