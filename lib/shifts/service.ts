@@ -1,11 +1,11 @@
 import "server-only";
 
-import type { Prisma, PrismaClient, Role } from "@prisma/client";
+import { Prisma, type PrismaClient, type Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { shiftListQuerySchema, shiftRecordSchema } from "@/lib/shifts/validation";
 
 type ShiftAdmin = { role: Role };
-type ShiftDatabase = Pick<PrismaClient, "shift" | "employee">;
+type ShiftDatabase = Pick<PrismaClient, "shift" | "employee" | "attendanceDaily">;
 type ShiftAuditDatabase = Pick<PrismaClient, "attendanceAuditLog">;
 
 export class ShiftAccessError extends Error {
@@ -24,7 +24,7 @@ export class ShiftNotFoundError extends Error {
 
 export class ShiftInUseError extends Error {
   constructor() {
-    super("This shift cannot be deleted while employees are assigned to it.");
+    super("This shift cannot be deleted while employees or attendance records reference it.");
     this.name = "ShiftInUseError";
   }
 }
@@ -41,6 +41,58 @@ function translateShiftError(error: unknown): never {
   throw error;
 }
 
+const shiftSelect = {
+  id: true,
+  name: true,
+  startTime: true,
+  endTime: true,
+  breakDurationMinutes: true,
+  gracePeriodMinutes: true,
+  lateThresholdMinutes: true,
+  earlyDepartureThresholdMinutes: true,
+  minimumWorkingHours: true,
+  overtimeEligible: true,
+  roundingRules: true,
+  workingDays: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.ShiftSelect;
+
+const editableShiftFields = [
+  "name",
+  "startTime",
+  "endTime",
+  "breakDurationMinutes",
+  "gracePeriodMinutes",
+  "lateThresholdMinutes",
+  "earlyDepartureThresholdMinutes",
+  "minimumWorkingHours",
+  "overtimeEligible",
+  "roundingRules",
+  "workingDays",
+] as const;
+
+function comparableValue(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  return JSON.stringify(value) ?? String(value);
+}
+
+export function getChangedShiftFields(
+  before: Record<(typeof editableShiftFields)[number], unknown>,
+  after: Record<(typeof editableShiftFields)[number], unknown>,
+) {
+  return editableShiftFields.filter((field) => comparableValue(before[field]) !== comparableValue(after[field]));
+}
+
+function shiftData(input: unknown): Prisma.ShiftUncheckedCreateInput {
+  const parsed = shiftRecordSchema.parse(input);
+  return {
+    ...parsed,
+    minimumWorkingHours: parsed.minimumWorkingHours,
+    roundingRules: parsed.roundingRules === null ? Prisma.DbNull : parsed.roundingRules as Prisma.InputJsonValue,
+  };
+}
+
 export async function listShifts(
   admin: ShiftAdmin,
   input: unknown = {},
@@ -55,7 +107,7 @@ export async function listShifts(
       orderBy: [{ name: "asc" }, { id: "asc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
-      select: { id: true, name: true, workingDays: true, createdAt: true, updatedAt: true },
+      select: shiftSelect,
     }),
     database.shift.count({ where }),
   ]);
@@ -66,7 +118,7 @@ export async function getShift(admin: ShiftAdmin, id: string, database: ShiftDat
   assertAdmin(admin);
   const shift = await database.shift.findUnique({
     where: { id },
-    select: { id: true, name: true, workingDays: true, createdAt: true, updatedAt: true },
+    select: shiftSelect,
   });
   if (!shift) throw new ShiftNotFoundError();
   return shift;
@@ -86,8 +138,7 @@ export async function createShift(
   database: ShiftDatabase = prisma,
 ) {
   assertAdmin(admin);
-  const { name, workingDays } = shiftRecordSchema.parse(input);
-  return database.shift.create({ data: { name, workingDays }, select: { id: true, name: true, workingDays: true } });
+  return database.shift.create({ data: shiftData(input), select: shiftSelect });
 }
 
 export async function updateShift(
@@ -97,12 +148,26 @@ export async function updateShift(
   database: ShiftDatabase = prisma,
 ) {
   assertAdmin(admin);
-  const { name, workingDays } = shiftRecordSchema.parse(input);
+  const { name, startTime, endTime, breakDurationMinutes, gracePeriodMinutes, lateThresholdMinutes,
+    earlyDepartureThresholdMinutes, minimumWorkingHours, overtimeEligible, roundingRules, workingDays } =
+    shiftRecordSchema.parse(input);
   try {
     return await database.shift.update({
       where: { id },
-      data: { name, workingDays },
-      select: { id: true, name: true, workingDays: true },
+      data: {
+        name,
+        startTime,
+        endTime,
+        breakDurationMinutes,
+        gracePeriodMinutes,
+        lateThresholdMinutes,
+        earlyDepartureThresholdMinutes,
+        minimumWorkingHours,
+        overtimeEligible,
+        roundingRules: roundingRules === null ? Prisma.DbNull : roundingRules as Prisma.InputJsonValue,
+        workingDays,
+      },
+      select: shiftSelect,
     });
   } catch (error) {
     translateShiftError(error);
@@ -112,8 +177,11 @@ export async function updateShift(
 export async function deleteShift(admin: ShiftAdmin, id: string, database: ShiftDatabase = prisma) {
   assertAdmin(admin);
   try {
-    const references = await database.employee.count({ where: { shiftId: id } });
-    if (references > 0) throw new ShiftInUseError();
+    const [employeeReferences, attendanceReferences] = await Promise.all([
+      database.employee.count({ where: { shiftId: id } }),
+      database.attendanceDaily.count({ where: { shiftId: id } }),
+    ]);
+    if (employeeReferences > 0 || attendanceReferences > 0) throw new ShiftInUseError();
     return await database.shift.delete({ where: { id }, select: { id: true, name: true } });
   } catch (error) {
     if (error instanceof ShiftInUseError) throw error;

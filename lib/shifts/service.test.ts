@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import type { ShiftWeekday } from "@prisma/client";
 import {
   createShift,
   deleteShift,
+  getChangedShiftFields,
   getShift,
   listShifts,
   ShiftAccessError,
@@ -17,20 +18,51 @@ import { shiftRecordSchema } from "@/lib/shifts/validation";
 
 const admin = { role: Role.ADMIN };
 const employee = { role: Role.EMPLOYEE };
-type Item = { id: string; name: string; workingDays: ShiftWeekday[]; createdAt: Date; updatedAt: Date };
+
+type Item = {
+  id: string;
+  name: string;
+  startTime: Date | null;
+  endTime: Date | null;
+  breakDurationMinutes: number | null;
+  gracePeriodMinutes: number | null;
+  lateThresholdMinutes: number | null;
+  earlyDepartureThresholdMinutes: number | null;
+  minimumWorkingHours: number | null;
+  overtimeEligible: boolean | null;
+  roundingRules: unknown;
+  workingDays: ShiftWeekday[];
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+const emptyConfiguration = {
+  startTime: null,
+  endTime: null,
+  breakDurationMinutes: null,
+  gracePeriodMinutes: null,
+  lateThresholdMinutes: null,
+  earlyDepartureThresholdMinutes: null,
+  minimumWorkingHours: null,
+  overtimeEligible: null,
+  roundingRules: null,
+};
 
 function createDatabaseStub() {
   const records = new Map<string, Item>([
-    ["shift-1", { id: "shift-1", name: "Day", workingDays: [], createdAt: new Date(0), updatedAt: new Date(0) }],
-    ["shift-2", { id: "shift-2", name: "Night", workingDays: [], createdAt: new Date(0), updatedAt: new Date(0) }],
+    ["shift-1", { id: "shift-1", name: "Day", ...emptyConfiguration, workingDays: [], createdAt: new Date(0), updatedAt: new Date(0) }],
+    ["shift-2", { id: "shift-2", name: "Night", ...emptyConfiguration, workingDays: [], createdAt: new Date(0), updatedAt: new Date(0) }],
   ]);
   const assignedIds = new Set(["shift-2"]);
+  const attendanceIds = new Set<string>();
   const calls: string[] = [];
+  const resultItem = (item: Item) => ({ ...item });
   const database = {
     shift: {
       findUnique: async ({ where }: { where: { id: string } }) => {
         calls.push("shift.findUnique");
-        return records.get(where.id) ?? null;
+        const item = records.get(where.id);
+        return item ? resultItem(item) : null;
       },
       findMany: async ({ where, skip, take }: {
         where?: { name?: { contains?: string } };
@@ -42,26 +74,39 @@ function createDatabaseStub() {
         const matched = [...records.values()]
           .filter((item) => !query || item.name.toLowerCase().includes(query))
           .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
-        return matched.slice(skip ?? 0, (skip ?? 0) + (take ?? matched.length));
+        return matched.slice(skip ?? 0, (skip ?? 0) + (take ?? matched.length)).map(resultItem);
       },
       count: async ({ where }: { where?: { name?: { contains?: string } } } = {}) => {
         calls.push("shift.count");
         const query = where?.name?.contains?.toLowerCase();
         return [...records.values()].filter((item) => !query || item.name.toLowerCase().includes(query)).length;
       },
-      create: async ({ data }: { data: { name: string; workingDays: ShiftWeekday[] } }) => {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
         calls.push("shift.create");
         const now = new Date();
-        const item = { id: "shift-3", name: data.name, workingDays: data.workingDays, createdAt: now, updatedAt: now };
+        const item = {
+          id: "shift-3",
+          ...emptyConfiguration,
+          ...data,
+          roundingRules: data.roundingRules === Prisma.DbNull ? null : data.roundingRules,
+          createdAt: now,
+          updatedAt: now,
+        } as Item;
         records.set(item.id, item);
-        return { id: item.id, name: item.name, workingDays: item.workingDays };
+        return resultItem(item);
       },
-      update: async ({ where, data }: { where: { id: string }; data: { name: string; workingDays: ShiftWeekday[] } }) => {
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
         calls.push("shift.update");
         const current = records.get(where.id);
         if (!current) throw { code: "P2025" };
-        records.set(where.id, { ...current, name: data.name, workingDays: data.workingDays, updatedAt: new Date() });
-        return { id: where.id, name: data.name, workingDays: data.workingDays };
+        const item = {
+          ...current,
+          ...data,
+          roundingRules: data.roundingRules === Prisma.DbNull ? null : data.roundingRules,
+          updatedAt: new Date(),
+        } as Item;
+        records.set(where.id, item);
+        return resultItem(item);
       },
       delete: async ({ where }: { where: { id: string } }) => {
         calls.push("shift.delete");
@@ -77,19 +122,87 @@ function createDatabaseStub() {
         return assignedIds.has(where.shiftId) ? 1 : 0;
       },
     },
+    attendanceDaily: {
+      count: async ({ where }: { where: { shiftId: string } }) => {
+        calls.push("attendanceDaily.count");
+        return attendanceIds.has(where.shiftId) ? 1 : 0;
+      },
+    },
   } as never;
-  return { database, calls, records };
+  return { database, calls, records, attendanceIds };
 }
 
 describe("shift validation", () => {
-  it("trims a name and rejects empty or whitespace-only values", () => {
-    assert.deepEqual(shiftRecordSchema.parse({ name: "  Day  " }), { name: "Day", workingDays: [] });
+  it("trims the name, defaults optional settings to null, and rejects invalid names or duplicate days", () => {
+    assert.deepEqual(shiftRecordSchema.parse({ name: "  Day  " }), {
+      name: "Day",
+      ...emptyConfiguration,
+      workingDays: [],
+    });
     assert.equal(shiftRecordSchema.safeParse({ name: "" }).success, false);
     assert.equal(shiftRecordSchema.safeParse({ name: "   " }).success, false);
     assert.equal(shiftRecordSchema.safeParse({ name: "Day", workingDays: ["MONDAY", "MONDAY"] }).success, false);
   });
 
-  it("rejects blank Shift names on create and update before database access", async () => {
+  it("parses configured values without assigning policy defaults", () => {
+    const parsed = shiftRecordSchema.parse({
+      name: " Day ",
+      startTime: "08:30",
+      endTime: "17:30",
+      breakDurationMinutes: "30",
+      gracePeriodMinutes: "5",
+      lateThresholdMinutes: "10",
+      earlyDepartureThresholdMinutes: "15",
+      minimumWorkingHours: "7.5",
+      overtimeEligible: "false",
+      roundingRules: '{"unit":"quarter-hour"}',
+      workingDays: ["MONDAY", "FRIDAY"],
+    });
+    assert.equal(parsed.startTime?.toISOString(), "1970-01-01T08:30:00.000Z");
+    assert.equal(parsed.endTime?.toISOString(), "1970-01-01T17:30:00.000Z");
+    assert.deepEqual({
+      break: parsed.breakDurationMinutes,
+      grace: parsed.gracePeriodMinutes,
+      late: parsed.lateThresholdMinutes,
+      early: parsed.earlyDepartureThresholdMinutes,
+      hours: parsed.minimumWorkingHours,
+      overtime: parsed.overtimeEligible,
+      rounding: parsed.roundingRules,
+      days: parsed.workingDays,
+    }, {
+      break: 30,
+      grace: 5,
+      late: 10,
+      early: 15,
+      hours: 7.5,
+      overtime: false,
+      rounding: { unit: "quarter-hour" },
+      days: ["MONDAY", "FRIDAY"],
+    });
+    const unboundedSettings = shiftRecordSchema.parse({
+      name: "Unbounded values",
+      breakDurationMinutes: "-10",
+      minimumWorkingHours: "-0.5",
+    });
+    assert.equal(unboundedSettings.breakDurationMinutes, -10);
+    assert.equal(unboundedSettings.minimumWorkingHours, -0.5);
+  });
+
+  it("rejects invalid time, field precision, boolean, and JSON inputs", () => {
+    const invalidRecords = [
+      { startTime: "25:00" },
+      { breakDurationMinutes: "1.5" },
+      { gracePeriodMinutes: "1.5" },
+      { minimumWorkingHours: "7.555" },
+      { overtimeEligible: "yes" },
+      { roundingRules: "{not json}" },
+    ];
+    for (const invalid of invalidRecords) {
+      assert.equal(shiftRecordSchema.safeParse({ name: "Day", ...invalid }).success, false);
+    }
+  });
+
+  it("rejects invalid Shift names before database access", async () => {
     const stub = createDatabaseStub();
     await assert.rejects(createShift(admin, { name: " " }, stub.database), { name: "ZodError" });
     await assert.rejects(updateShift(admin, "shift-1", { name: "" }, stub.database), { name: "ZodError" });
@@ -98,7 +211,7 @@ describe("shift validation", () => {
 });
 
 describe("shift management", () => {
-  it("rejects non-admin access to every read and mutation before database access", async () => {
+  it("rejects non-admin access before database access", async () => {
     const stub = createDatabaseStub();
     await assert.rejects(listShifts(employee, {}, stub.database), ShiftAccessError);
     await assert.rejects(getShift(employee, "shift-1", stub.database), ShiftAccessError);
@@ -108,16 +221,28 @@ describe("shift management", () => {
     assert.deepEqual(stub.calls, []);
   });
 
-  it("creates a Shift with a trimmed name", async () => {
+  it("creates and reads a Shift configuration", async () => {
     const stub = createDatabaseStub();
-    assert.deepEqual(await createShift(admin, {
+    const created = await createShift(admin, {
       name: "  Evening ",
+      startTime: "14:00",
+      endTime: "22:00",
+      breakDurationMinutes: "30",
+      gracePeriodMinutes: "5",
+      lateThresholdMinutes: "10",
+      earlyDepartureThresholdMinutes: "15",
+      minimumWorkingHours: "7.5",
+      overtimeEligible: "true",
+      roundingRules: '{"increment":15}',
       workingDays: ["TUESDAY", "SATURDAY"],
-    }, stub.database), { id: "shift-3", name: "Evening", workingDays: ["TUESDAY", "SATURDAY"] });
-  });
-
-  it("gets a Shift and reports missing IDs", async () => {
-    const stub = createDatabaseStub();
+    }, stub.database);
+    assert.equal(created.name, "Evening");
+    assert.equal(created.startTime?.toISOString(), "1970-01-01T14:00:00.000Z");
+    assert.equal(created.minimumWorkingHours, 7.5);
+    assert.equal(created.overtimeEligible, true);
+    assert.deepEqual(created.roundingRules, { increment: 15 });
+    assert.deepEqual(created.workingDays, ["TUESDAY", "SATURDAY"]);
+    assert.equal((await getShift(admin, created.id, stub.database)).breakDurationMinutes, 30);
     assert.equal((await getShift(admin, "shift-1", stub.database)).name, "Day");
     await assert.rejects(getShift(admin, "missing", stub.database), ShiftNotFoundError);
   });
@@ -132,21 +257,39 @@ describe("shift management", () => {
     assert.equal(secondPage.items[0]?.name, "Night");
   });
 
-  it("updates a Shift name", async () => {
+  it("updates configuration and identifies only changed fields", async () => {
     const stub = createDatabaseStub();
-    assert.deepEqual(await updateShift(admin, "shift-1", {
+    const before = await getShift(admin, "shift-1", stub.database);
+    const updated = await updateShift(admin, "shift-1", {
       name: "Daytime",
+      startTime: "08:30",
+      endTime: "16:30",
+      minimumWorkingHours: "7.5",
+      overtimeEligible: "false",
+      roundingRules: "",
       workingDays: ["WEDNESDAY"],
-    }, stub.database), {
-      id: "shift-1",
-      name: "Daytime",
-      workingDays: ["WEDNESDAY"],
-    });
+    }, stub.database);
+    assert.equal(updated.name, "Daytime");
+    assert.equal(updated.startTime?.toISOString(), "1970-01-01T08:30:00.000Z");
+    assert.equal(updated.minimumWorkingHours, 7.5);
+    assert.equal(updated.overtimeEligible, false);
+    assert.deepEqual(updated.workingDays, ["WEDNESDAY"]);
+    assert.deepEqual(getChangedShiftFields(before, updated), [
+      "name",
+      "startTime",
+      "endTime",
+      "minimumWorkingHours",
+      "overtimeEligible",
+      "workingDays",
+    ]);
   });
 
-  it("blocks deletion while assigned and allows deletion when unassigned", async () => {
+  it("blocks deletion while employees or attendance rows reference a shift", async () => {
     const stub = createDatabaseStub();
     await assert.rejects(deleteShift(admin, "shift-2", stub.database), ShiftInUseError);
+    stub.attendanceIds.add("shift-1");
+    await assert.rejects(deleteShift(admin, "shift-1", stub.database), ShiftInUseError);
+    stub.attendanceIds.clear();
     assert.deepEqual(await deleteShift(admin, "shift-1", stub.database), { id: "shift-1", name: "Day" });
     await assert.rejects(deleteShift(admin, "missing", stub.database), ShiftNotFoundError);
   });

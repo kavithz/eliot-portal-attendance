@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { createShift, deleteShift, getShift, ShiftInUseError, ShiftNotFoundError, updateShift, writeShiftAuditEvent } from "@/lib/shifts/service";
+import { createShift, deleteShift, getChangedShiftFields, getShift, ShiftInUseError, ShiftNotFoundError, updateShift, writeShiftAuditEvent } from "@/lib/shifts/service";
 
 export type ShiftActionState = { error: string } | null;
 
@@ -23,26 +23,47 @@ export async function saveShiftAction(
 ): Promise<ShiftActionState> {
   try {
     const admin = await requireAdmin();
+    const formValues = {
+      name: formData.get("name"),
+      startTime: formData.get("startTime"),
+      endTime: formData.get("endTime"),
+      breakDurationMinutes: formData.get("breakDurationMinutes"),
+      gracePeriodMinutes: formData.get("gracePeriodMinutes"),
+      lateThresholdMinutes: formData.get("lateThresholdMinutes"),
+      earlyDepartureThresholdMinutes: formData.get("earlyDepartureThresholdMinutes"),
+      minimumWorkingHours: formData.get("minimumWorkingHours"),
+      overtimeEligible: formData.get("overtimeEligible"),
+      roundingRules: formData.get("roundingRules"),
+      workingDays: formData.getAll("workingDays"),
+    };
     await prisma.$transaction(async (tx) => {
       if (id) {
         const before = await getShift(admin, id, tx);
-        const updated = await updateShift(admin, id, {
-          name: formData.get("name"),
-          workingDays: formData.getAll("workingDays"),
-        }, tx);
-        const changedFields = [
-          ...(before.name !== updated.name ? ["name"] : []),
-          ...(JSON.stringify(before.workingDays) !== JSON.stringify(updated.workingDays) ? ["workingDays"] : []),
-        ];
+        const updated = await updateShift(admin, id, formValues, tx);
+        const changedFields = getChangedShiftFields(before, updated);
         if (changedFields.length > 0) {
           await writeShiftAuditEvent(tx, { shiftId: id, actorId: admin.id, operation: "UPDATED", changedFields });
         }
       } else {
-        const created = await createShift(admin, {
-          name: formData.get("name"),
-          workingDays: formData.getAll("workingDays"),
-        }, tx);
-        await writeShiftAuditEvent(tx, { shiftId: created.id, actorId: admin.id, operation: "CREATED", changedFields: ["name", "workingDays"] });
+        const created = await createShift(admin, formValues, tx);
+        await writeShiftAuditEvent(tx, {
+          shiftId: created.id,
+          actorId: admin.id,
+          operation: "CREATED",
+          changedFields: [
+            "name",
+            "startTime",
+            "endTime",
+            "breakDurationMinutes",
+            "gracePeriodMinutes",
+            "lateThresholdMinutes",
+            "earlyDepartureThresholdMinutes",
+            "minimumWorkingHours",
+            "overtimeEligible",
+            "roundingRules",
+            "workingDays",
+          ],
+        });
       }
     });
   } catch (error) {
