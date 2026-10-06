@@ -19,6 +19,7 @@ export type AttendanceEngineShift = {
   minimumWorkingHours: number | string | null;
   overtimeEligible: boolean | null;
   roundingRules: unknown;
+  workingDays?: readonly string[];
 };
 
 export type AttendanceEngineResult = {
@@ -30,7 +31,7 @@ export type AttendanceEngineResult = {
   workingHours: number | null;
   lateMinutes: number | null;
   earlyMinutes: number | null;
-  status: "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "UNDETERMINED";
+  status: "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "UNDETERMINED";
   statusReasons: string[];
   workPeriods: Array<{ startAt: Date; endAt: Date; durationMs: number }>;
   breakPeriods: Array<{ startAt: Date; endAt: Date; durationMs: number }>;
@@ -74,14 +75,11 @@ export function calculateDailyAttendance(input: {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
     throw new AttendanceEngineConfigurationError("Attendance date must be a valid YYYY-MM-DD calendar date.");
   }
-  if (!shift.startTime || !shift.endTime || shift.gracePeriodMinutes === null) {
-    throw new AttendanceEngineConfigurationError(
-      "Configure the assigned Shift start time, end time, and grace period before calculating attendance.",
-    );
-  }
+  const weekdayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"] as const;
+  const weekday = weekdayNames[parsedDate.getUTCDay()];
+  const isScheduledWorkingDay = shift.workingDays?.length ? shift.workingDays.includes(weekday) : null;
   if (
-    !Number.isSafeInteger(shift.gracePeriodMinutes)
-    || shift.gracePeriodMinutes < 0
+    (shift.gracePeriodMinutes !== null && (!Number.isSafeInteger(shift.gracePeriodMinutes) || shift.gracePeriodMinutes < 0))
     || (shift.lateThresholdMinutes !== null && (!Number.isSafeInteger(shift.lateThresholdMinutes) || shift.lateThresholdMinutes < 0))
     || (shift.earlyDepartureThresholdMinutes !== null && (!Number.isSafeInteger(shift.earlyDepartureThresholdMinutes) || shift.earlyDepartureThresholdMinutes < 0))
   ) {
@@ -89,9 +87,10 @@ export function calculateDailyAttendance(input: {
   }
 
   const localDay = getEmployeeLocalDayWindow(fromZonedTime(`${date}T12:00:00.000`, timeZone), timeZone);
-  const startTime = timeOfDay(shift.startTime);
-  const endTime = timeOfDay(shift.endTime);
-  if (endTime <= startTime) {
+  const startTime = shift.startTime ? timeOfDay(shift.startTime) : null;
+  const endTime = shift.endTime ? timeOfDay(shift.endTime) : null;
+  const overnightShift = startTime !== null && endTime !== null && endTime <= startTime;
+  if (overnightShift) {
     throw new AttendanceEngineConfigurationError(
       "The SRS does not define overnight Shift calculation; this Shift cannot be calculated safely.",
     );
@@ -165,12 +164,12 @@ export function calculateDailyAttendance(input: {
   const totalWorkingMs = hasUnresolvedSequence ? null : workPeriods.reduce((total, period) => total + period.durationMs, 0);
   const workingHours = totalWorkingMs === null ? null : totalWorkingMs / 3_600_000;
 
-  const scheduledStart = fromZonedTime(`${date}T${startTime}`, timeZone);
-  const scheduledEnd = fromZonedTime(`${date}T${endTime}`, timeZone);
-  const lateAfterGrace = firstIn
+  const scheduledStart = startTime ? fromZonedTime(`${date}T${startTime}`, timeZone) : null;
+  const scheduledEnd = endTime ? fromZonedTime(`${date}T${endTime}`, timeZone) : null;
+  const lateAfterGrace = firstIn && scheduledStart && shift.gracePeriodMinutes !== null
     ? firstIn.getTime() - scheduledStart.getTime() - shift.gracePeriodMinutes * 60_000
     : null;
-  const earlyDuration = lastOut ? scheduledEnd.getTime() - lastOut.getTime() : null;
+  const earlyDuration = lastOut && scheduledEnd ? scheduledEnd.getTime() - lastOut.getTime() : null;
   const lateMinutes = lateAfterGrace === null
     ? null
     : lateAfterGrace > 0 ? minutesDifference(lateAfterGrace) : 0;
@@ -187,25 +186,52 @@ export function calculateDailyAttendance(input: {
   if (totalWorkingMs !== null && (totalWorkingMs * 100) % 3_600_000 !== 0) {
     statusReasons.add("Working hours exceed the Phase A two-decimal storage precision; no rounding was applied.");
   }
-  if (shift.lateThresholdMinutes === null) statusReasons.add("Late threshold is not configured; threshold-based late policy is unresolved.");
-  if (shift.earlyDepartureThresholdMinutes === null) statusReasons.add("Early-departure threshold is not configured; threshold-based status is unresolved.");
-  if (shift.minimumWorkingHours === null) statusReasons.add("Minimum working hours are not configured; duration-based status is unresolved.");
+  if (!shift.startTime) statusReasons.add("Shift start time is not configured; arrival status is unresolved.");
+  if (shift.gracePeriodMinutes === null) statusReasons.add("Grace period is not configured; arrival status is unresolved.");
+  if (!shift.endTime) statusReasons.add("Shift end time is not configured; departure status is unresolved.");
+  if (shift.minimumWorkingHours === null) statusReasons.add("Minimum working hours are not configured; a normal day cannot be distinguished from a Half Day.");
+  statusReasons.add("The SRS does not define how late and early-departure thresholds affect status; configured grace and shift end determine Late and Early Out.");
   statusReasons.add("The SRS does not define the rounding algorithm; no rounding has been applied.");
-  statusReasons.add("The SRS does not define status precedence or the threshold semantics needed for a final daily status.");
-  if (workPeriods.length === 0 && uniquePunches.length === 0) statusReasons.add("No raw punches exist for this employee-local date.");
+  if (workPeriods.length === 0 && uniquePunches.length === 0) {
+    statusReasons.add(isScheduledWorkingDay === false
+      ? "No raw punches exist on a configured non-working day."
+      : "No raw punches exist for this employee-local date; absence cannot be distinguished from leave, WFH, holiday, or a non-working day.");
+  }
   if (hasUnresolvedSequence) statusReasons.add("Punch sequence is unusual; work-period calculation is unresolved.");
 
   const incomplete = punchIssues.has("MISSING_IN") || punchIssues.has("MISSING_OUT");
-  const hasBothLateAndEarly = (lateMinutes ?? 0) > 0 && (earlyMinutes ?? 0) > 0;
   let status: AttendanceEngineResult["status"] = "UNDETERMINED";
   if (incomplete) {
     status = "MISSING_PUNCH";
-  } else if (!hasUnresolvedSequence && !hasBothLateAndEarly && (lateMinutes ?? 0) > 0 && earlyMinutes === 0) {
-    status = "LATE";
-  } else if (!hasUnresolvedSequence && !hasBothLateAndEarly && (earlyMinutes ?? 0) > 0 && lateMinutes === 0) {
-    status = "EARLY_OUT";
+  } else if (hasUnresolvedSequence) {
+    statusReasons.add("Punch sequence is unusual; a daily status cannot be assigned safely.");
+  } else if (uniquePunches.length === 0 && isScheduledWorkingDay === false) {
+    status = "WEEKEND";
+  } else if (uniquePunches.length > 0 && isScheduledWorkingDay === false) {
+    statusReasons.add("Punches exist on a configured non-working day; the SRS does not define status or overtime treatment.");
+  } else if (workPeriods.length === 0) {
+    statusReasons.add("No complete work period exists; a daily status cannot be assigned safely.");
+  } else if (lateMinutes === null || earlyMinutes === null) {
+    statusReasons.add("Shift timing configuration is incomplete; a daily status cannot be assigned safely.");
   } else {
-    statusReasons.add("Daily status cannot be selected without additional SRS policy.");
+    const belowMinimumHours = shift.minimumWorkingHours !== null
+      && workingHours !== null
+      && workingHours < Number(shift.minimumWorkingHours);
+    if (belowMinimumHours) {
+      statusReasons.add("Worked hours are below the configured minimum; approval is unavailable to distinguish a Half Day.");
+    } else if (lateMinutes > 0 && earlyMinutes > 0) {
+      statusReasons.add("The SRS does not define precedence when both Late and Early Out apply.");
+    } else if (lateMinutes > 0) {
+      status = "LATE";
+    } else if (earlyMinutes > 0) {
+      status = "EARLY_OUT";
+    } else if (shift.minimumWorkingHours === null) {
+      statusReasons.add("Minimum working hours are unset; status cannot be distinguished from a Half Day.");
+    } else if (workingHours === null) {
+      statusReasons.add("Working hours are unresolved; a daily status cannot be assigned safely.");
+    } else {
+      status = "PRESENT";
+    }
   }
 
   return {

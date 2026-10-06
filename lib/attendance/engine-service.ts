@@ -37,6 +37,7 @@ const shiftConfigurationSelect = {
   minimumWorkingHours: true,
   overtimeEligible: true,
   roundingRules: true,
+  workingDays: true,
 } satisfies Prisma.ShiftSelect;
 
 export async function calculateAndPersistDailyAttendance(

@@ -53,8 +53,7 @@ describe("deterministic attendance engine foundation", () => {
     assert.equal(result.workingHours, 9);
     assert.equal(result.lateMinutes, 0);
     assert.equal(result.earlyMinutes, 0);
-    assert.equal(result.status, "UNDETERMINED");
-    assert.ok(result.statusReasons.some((reason) => reason.includes("status precedence")));
+    assert.equal(result.status, "PRESENT");
   });
 
   it("calculates multiple work and break periods from alternating punches", () => {
@@ -138,6 +137,17 @@ describe("deterministic attendance engine foundation", () => {
     assert.equal(result.status, "LATE");
   });
 
+  it("does not choose precedence when Late and Early Out both apply", () => {
+    const result = calculate([
+      punch("in", "IN", "08:41"),
+      punch("out", "OUT", "17:29"),
+    ]);
+
+    assert.equal(result.lateMinutes, 1);
+    assert.equal(result.earlyMinutes, 1);
+    assert.equal(result.status, "UNDETERMINED");
+  });
+
   it("calculates early minutes from the assigned shift end", () => {
     const result = calculate(
       [punch("in", "IN", "08:30"), punch("out", "OUT", "17:10")],
@@ -148,15 +158,41 @@ describe("deterministic attendance engine foundation", () => {
     assert.equal(result.status, "EARLY_OUT");
   });
 
-  it("returns a clear error when required Shift configuration is missing", () => {
-    assert.throws(
-      () => calculate([punch("in", "IN", "08:30")], { gracePeriodMinutes: null }),
-      /Configure the assigned Shift start time, end time, and grace period/,
+  it("leaves status undetermined rather than inventing unset Shift configuration", () => {
+    const unsetGrace = calculate([punch("in", "IN", "08:30"), punch("out", "OUT", "17:30")], {
+      gracePeriodMinutes: null,
+    });
+    const unsetStart = calculate([punch("in", "IN", "08:30"), punch("out", "OUT", "17:30")], {
+      startTime: null,
+    });
+    const unsetEnd = calculate([punch("in", "IN", "08:30"), punch("out", "OUT", "17:30")], {
+      endTime: null,
+    });
+
+    assert.equal(unsetGrace.status, "UNDETERMINED");
+    assert.equal(unsetGrace.lateMinutes, null);
+    assert.equal(unsetStart.status, "UNDETERMINED");
+    assert.equal(unsetStart.lateMinutes, null);
+    assert.equal(unsetEnd.status, "UNDETERMINED");
+    assert.equal(unsetEnd.earlyMinutes, null);
+
+    const knownLateWithoutMinimum = calculate(
+      [punch("in", "IN", "08:41"), punch("out", "OUT", "17:30")],
+      { minimumWorkingHours: null },
     );
-    assert.throws(
-      () => calculate([punch("in", "IN", "08:30")], { startTime: null }),
-      /Configure the assigned Shift start time, end time, and grace period/,
+    assert.equal(knownLateWithoutMinimum.status, "LATE");
+  });
+
+  it("does not infer unsupported half-day, absence, leave, WFH, holiday, weekend, or payroll statuses", () => {
+    const belowMinimum = calculate(
+      [punch("in", "IN", "08:30"), punch("out", "OUT", "12:00")],
     );
+    const noPunches = calculate([]);
+
+    assert.equal(belowMinimum.status, "UNDETERMINED");
+    assert.equal(noPunches.status, "UNDETERMINED");
+    assert.equal(noPunches.firstIn, null);
+    assert.equal(noPunches.lastOut, null);
   });
 
   it("uses the employee-local date when the UTC calendar date differs", () => {
