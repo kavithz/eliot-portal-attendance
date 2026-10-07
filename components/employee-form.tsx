@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { createEmployeeAction, updateEmployeeAction } from "@/app/(workspace)/admin/employees/actions";
 import type { EmployeeActionState } from "@/app/(workspace)/admin/employees/actions";
+import type { Role } from "@prisma/client";
 
 type EmployeeFormValues = {
   id: string;
@@ -18,7 +19,7 @@ type EmployeeFormValues = {
   supervisorId: string | null;
   managerId: string | null;
   email: string;
-  role: "EMPLOYEE" | "ADMIN" | "DEPARTMENT_MANAGER" | "SUPERVISOR";
+  role: Role;
   countryCode: string;
   timeZone: string;
   profile: {
