@@ -113,9 +113,12 @@ export async function decideSupervisorLeaveRequest(
       select: {
         id: true,
         employeeId: true,
+        startDate: true,
+        endDate: true,
         status: true,
         currentApprovalStage: true,
         currentApproverId: true,
+        leaveType: { select: { name: true } },
         employee: {
           select: {
             userId: true,
@@ -189,6 +192,17 @@ export async function decideSupervisorLeaveRequest(
           reviewedAt: reviewedAt.toISOString(),
         },
         reason: decision.reason ?? null,
+      },
+      select: { id: true },
+    });
+
+    const outcome = decision.action === "APPROVE" ? "approved" : "rejected";
+    await transaction.notification.create({
+      data: {
+        userId: request.employee.userId,
+        title: `Leave request ${outcome}`,
+        message: `Your ${request.leaveType.name} request for ${request.startDate.toISOString().slice(0, 10)} to ${request.endDate.toISOString().slice(0, 10)} was ${outcome}.`,
+        type: decision.action === "APPROVE" ? "LEAVE_REQUEST_APPROVED" : "LEAVE_REQUEST_REJECTED",
       },
       select: { id: true },
     });

@@ -63,6 +63,7 @@ function createRequestDatabaseStub(options: {
   ]);
   const requests: Record<string, unknown>[] = [];
   const audits: Record<string, unknown>[] = [];
+  const notifications: Record<string, unknown>[] = [];
   const attendanceAndBalanceWrites: string[] = [];
   let nextId = 1;
   const tx = {
@@ -116,6 +117,7 @@ function createRequestDatabaseStub(options: {
             userId: employee.userId,
             supervisor: employee.supervisor,
           } : null,
+          leaveType: { name: "Annual Leave" },
         };
       },
       findMany: async ({ where, skip, take }: {
@@ -192,12 +194,18 @@ function createRequestDatabaseStub(options: {
         return { id: `audit-${audits.length}` };
       },
     },
+    notification: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        notifications.push(data);
+        return { id: `notification-${notifications.length}` };
+      },
+    },
   };
   const database = {
     ...tx,
     $transaction: async <T>(operation: (transaction: typeof tx) => Promise<T>) => operation(tx),
   } as never;
-  return { database, requests, audits, attendanceAndBalanceWrites };
+  return { database, requests, audits, notifications, attendanceAndBalanceWrites };
 }
 
 describe("Leave request validation", () => {
@@ -361,6 +369,13 @@ describe("Supervisor Leave approval workflow", () => {
       currentApproverId: "supervisor-user-1",
     });
     assert.equal((stub.audits.at(-1)?.newValues as Record<string, unknown>)?.status, "APPROVED");
+    assert.equal(stub.notifications.length, 1);
+    assert.deepEqual(stub.notifications[0], {
+      userId: "employee-user-1",
+      title: "Leave request approved",
+      message: "Your Annual Leave request for 2026-10-12 to 2026-10-13 was approved.",
+      type: "LEAVE_REQUEST_APPROVED",
+    });
   });
 
   it("rejects a pending request, records the rejection note and audit", async () => {
@@ -379,6 +394,14 @@ describe("Supervisor Leave approval workflow", () => {
     assert.equal(stub.audits.at(-1)?.reason, "Insufficient supporting details");
     assert.equal((stub.audits.at(-1)?.newValues as Record<string, unknown>)?.status, "REJECTED");
     assert.deepEqual(stub.attendanceAndBalanceWrites, []);
+    assert.equal(stub.notifications.length, 1);
+    assert.deepEqual(stub.notifications[0], {
+      userId: "employee-user-1",
+      title: "Leave request rejected",
+      message: "Your Annual Leave request for 2026-10-12 to 2026-10-13 was rejected.",
+      type: "LEAVE_REQUEST_REJECTED",
+    });
+    assert.notEqual(stub.notifications[0]?.userId, "supervisor-user-1");
   });
 
   it("does not permit a second decision and preserves leave request subject identity", async () => {
@@ -391,6 +414,7 @@ describe("Supervisor Leave approval workflow", () => {
     );
     assert.equal(stub.requests[0]?.employeeId, "employee-1");
     assert.equal(stub.audits.length, 2);
+    assert.equal(stub.notifications.length, 1);
   });
 
   it("does not overwrite a concurrent decision or create a duplicate audit", async () => {
@@ -408,5 +432,6 @@ describe("Supervisor Leave approval workflow", () => {
     assert.equal(stub.requests[0]?.status, LeaveRequestStatus.REJECTED);
     assert.equal(stub.requests[0]?.reviewedById, "other-reviewer");
     assert.equal(stub.audits.length, 1);
+    assert.equal(stub.notifications.length, 0);
   });
 });
