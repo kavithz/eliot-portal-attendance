@@ -2,6 +2,7 @@ import "server-only";
 
 import { LeaveRequestStatus, type Prisma, type PrismaClient, type Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { hasPermission } from "@/lib/auth/permissions";
 import { leaveRequestInputSchema, leaveRequestListQuerySchema } from "@/lib/leave/validation";
 
 type LeaveRequestActor = { id: string; role: Role };
@@ -45,15 +46,31 @@ export class LeaveRequestNotFoundError extends Error {
   }
 }
 
+export class LeaveRequestSupervisorNotFoundError extends Error {
+  constructor() {
+    super("An active assigned Supervisor is required to submit a Leave request.");
+    this.name = "LeaveRequestSupervisorNotFoundError";
+  }
+}
+
 function assertPermission(actor: LeaveRequestActor | null, permission: "leave:submit" | "leave:request:self:read"): asserts actor is LeaveRequestActor {
-  if (!actor || (actor.role !== "EMPLOYEE" && actor.role !== "ADMIN")) throw new LeaveRequestAccessError();
+  if (!actor || !hasPermission(actor.role, permission)) throw new LeaveRequestAccessError();
   if (permission === "leave:submit" && actor.role !== "EMPLOYEE") throw new LeaveRequestAccessError();
 }
 
 async function getOwnEmployee(actor: LeaveRequestActor, database: Pick<PrismaClient, "employee">) {
   const employee = await database.employee.findUnique({
     where: { userId: actor.id },
-    select: { id: true, userId: true },
+    select: {
+      id: true,
+      userId: true,
+      supervisor: {
+        select: {
+          userId: true,
+          user: { select: { role: true, isActive: true } },
+        },
+      },
+    },
   });
   if (!employee?.userId) throw new LeaveRequestEmployeeNotFoundError();
   return employee;
@@ -91,6 +108,14 @@ export async function submitOwnLeaveRequest(
 
   return database.$transaction(async (transaction) => {
     const employee = await getOwnEmployee(actor, transaction);
+    const supervisor = employee.supervisor;
+    if (
+      !supervisor?.userId
+      || supervisor.user?.role !== "SUPERVISOR"
+      || !supervisor.user.isActive
+    ) {
+      throw new LeaveRequestSupervisorNotFoundError();
+    }
     const leaveType = await transaction.leaveType.findUnique({
       where: { id: parsed.leaveTypeId },
       select: { id: true },
@@ -114,6 +139,8 @@ export async function submitOwnLeaveRequest(
         reason: parsed.reason,
         attachmentDocumentId: parsed.attachmentDocumentId,
         status: LeaveRequestStatus.PENDING,
+        currentApprovalStage: "SUPERVISOR",
+        currentApproverId: supervisor.userId,
       },
       select: ownRequestSelect,
     });

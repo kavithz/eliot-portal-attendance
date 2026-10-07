@@ -11,6 +11,13 @@ import {
   listOwnLeaveRequests,
   submitOwnLeaveRequest,
 } from "@/lib/leave/request-service";
+import {
+  decideSupervisorLeaveRequest,
+  LeaveApprovalAccessError,
+  LeaveApprovalScopeError,
+  LeaveApprovalStageError,
+  listSupervisorLeaveRequests,
+} from "@/lib/leave/approval-service";
 import { leaveRequestInputSchema } from "@/lib/leave/validation";
 
 const employeeActor = { id: "employee-user-1", role: Role.EMPLOYEE };
@@ -22,10 +29,32 @@ const requestInput = {
   attachmentDocumentId: null,
 };
 
-function createRequestDatabaseStub() {
+function createRequestDatabaseStub(options: {
+  supervisor?: "assigned" | "missing" | "inactive";
+  forceDecisionRace?: boolean;
+} = {}) {
+  const supervisorStatus = options.supervisor ?? "assigned";
   const employees = new Map([
-    ["employee-user-1", { id: "employee-1", userId: "employee-user-1" }],
-    ["employee-user-2", { id: "employee-2", userId: "employee-user-2" }],
+    ["employee-user-1", {
+      id: "employee-1",
+      userId: "employee-user-1",
+      name: "Employee One",
+      employeeId: "E-001",
+      supervisor: supervisorStatus === "missing" ? null : {
+        userId: "supervisor-user-1",
+        user: { role: Role.SUPERVISOR, isActive: supervisorStatus !== "inactive" },
+      },
+    }],
+    ["employee-user-2", {
+      id: "employee-2",
+      userId: "employee-user-2",
+      name: "Employee Two",
+      employeeId: "E-002",
+      supervisor: {
+        userId: "supervisor-user-2",
+        user: { role: Role.SUPERVISOR, isActive: true },
+      },
+    }],
   ]);
   const leaveTypes = new Set(["leave-type-1"]);
   const documents = new Map([
@@ -34,6 +63,7 @@ function createRequestDatabaseStub() {
   ]);
   const requests: Record<string, unknown>[] = [];
   const audits: Record<string, unknown>[] = [];
+  const attendanceAndBalanceWrites: string[] = [];
   let nextId = 1;
   const tx = {
     employee: {
@@ -48,13 +78,24 @@ function createRequestDatabaseStub() {
         return document?.employeeId === where.employeeId ? { id: document.id } : null;
       },
     },
+    attendanceDaily: {
+      update: async () => { attendanceAndBalanceWrites.push("attendanceDaily"); },
+      updateMany: async () => { attendanceAndBalanceWrites.push("attendanceDaily"); },
+    },
+    attendanceRaw: {
+      create: async () => { attendanceAndBalanceWrites.push("attendanceRaw"); },
+      update: async () => { attendanceAndBalanceWrites.push("attendanceRaw"); },
+      delete: async () => { attendanceAndBalanceWrites.push("attendanceRaw"); },
+    },
+    leaveEntitlement: {
+      update: async () => { attendanceAndBalanceWrites.push("leaveEntitlement"); },
+      upsert: async () => { attendanceAndBalanceWrites.push("leaveEntitlement"); },
+    },
     leaveRequest: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         const created = {
           id: `leave-request-${nextId++}`,
           ...data,
-          currentApprovalStage: null,
-          currentApproverId: null,
           decisionReason: null,
           reviewedById: null,
           reviewedAt: null,
@@ -65,10 +106,81 @@ function createRequestDatabaseStub() {
         requests.push(created);
         return created;
       },
-      findMany: async ({ where, skip, take }: { where: { employeeId: string }; skip: number; take: number }) => requests
-        .filter((request) => request.employeeId === where.employeeId)
-        .sort((a, b) => (b.createdAt as Date).getTime() - (a.createdAt as Date).getTime())
-        .slice(skip, skip + take),
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        const request = requests.find((candidate) => candidate.id === where.id);
+        if (!request) return null;
+        const employee = [...employees.values()].find((candidate) => candidate.id === request.employeeId);
+        return {
+          ...request,
+          employee: employee ? {
+            userId: employee.userId,
+            supervisor: employee.supervisor,
+          } : null,
+        };
+      },
+      findMany: async ({ where, skip, take }: {
+        where: { employeeId?: string; currentApproverId?: string; status?: LeaveRequestStatus; currentApprovalStage?: string };
+        skip?: number;
+        take?: number;
+      }) => {
+        return requests.filter((request) => {
+          const employee = [...employees.values()].find((candidate) => candidate.id === request.employeeId);
+          const scopeMatches = where.currentApproverId === undefined || (
+            employee?.supervisor?.userId === where.currentApproverId
+            && employee.supervisor.user?.role === Role.SUPERVISOR
+            && employee.supervisor.user.isActive
+          );
+          return scopeMatches
+          && (where.employeeId === undefined || request.employeeId === where.employeeId)
+          && (where.currentApproverId === undefined || request.currentApproverId === where.currentApproverId)
+          && (where.status === undefined || request.status === where.status)
+          && (where.currentApprovalStage === undefined || request.currentApprovalStage === where.currentApprovalStage);
+        }).sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime())
+        .slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take)
+        .map((request) => {
+          const employee = [...employees.values()].find((candidate) => candidate.id === request.employeeId);
+          return {
+            ...request,
+            employee: employee ? {
+              id: employee.id,
+              name: employee.name,
+              employeeId: employee.employeeId,
+              userId: employee.userId,
+              supervisor: employee.supervisor,
+            } : null,
+            leaveType: { id: request.leaveTypeId, name: "Annual Leave" },
+          };
+        });
+      },
+      updateMany: async ({ where, data }: { where: { id: string; status: LeaveRequestStatus; currentApprovalStage: string; currentApproverId: string }; data: Record<string, unknown> }) => {
+        if (options.forceDecisionRace) {
+          const concurrentlyDecided = requests.find((candidate) => candidate.id === where.id);
+          if (concurrentlyDecided) Object.assign(concurrentlyDecided, {
+            status: LeaveRequestStatus.REJECTED,
+            currentApprovalStage: null,
+            currentApproverId: null,
+            reviewedById: "other-reviewer",
+            reviewedAt: new Date("2026-10-05T11:00:00.000Z"),
+          });
+          return { count: 0 };
+        }
+        const request = requests.find((candidate) =>
+          candidate.id === where.id
+          && candidate.status === where.status
+          && candidate.currentApprovalStage === where.currentApprovalStage
+          && candidate.currentApproverId === where.currentApproverId,
+        );
+        const employee = request && [...employees.values()].find((candidate) => candidate.id === request.employeeId);
+        if (
+          !request
+          || !employee?.supervisor
+          || employee.supervisor.userId !== where.currentApproverId
+          || employee.supervisor.user?.role !== Role.SUPERVISOR
+          || !employee.supervisor.user.isActive
+        ) return { count: 0 };
+        Object.assign(request, data);
+        return { count: 1 };
+      },
       count: async ({ where }: { where: { employeeId: string } }) => requests
         .filter((request) => request.employeeId === where.employeeId).length,
       findFirst: async ({ where }: { where: { id: string; employeeId: string } }) => requests
@@ -85,7 +197,7 @@ function createRequestDatabaseStub() {
     ...tx,
     $transaction: async <T>(operation: (transaction: typeof tx) => Promise<T>) => operation(tx),
   } as never;
-  return { database, requests, audits };
+  return { database, requests, audits, attendanceAndBalanceWrites };
 }
 
 describe("Leave request validation", () => {
@@ -107,8 +219,8 @@ describe("Leave request submission and self-service history", () => {
     }, stub.database);
     assert.equal(stub.requests[0]?.employeeId, "employee-1");
     assert.equal(request.status, LeaveRequestStatus.PENDING);
-    assert.equal(request.currentApprovalStage, null);
-    assert.equal(request.currentApproverId, null);
+    assert.equal(request.currentApprovalStage, "SUPERVISOR");
+    assert.equal(request.currentApproverId, "supervisor-user-1");
     assert.equal(stub.audits.length, 1);
     assert.equal(stub.audits[0]?.employeeId, "employee-user-1");
     assert.equal(stub.audits[0]?.actionType, "LEAVE_REQUEST_SUBMITTED");
@@ -127,6 +239,17 @@ describe("Leave request submission and self-service history", () => {
       LeaveRequestEmployeeNotFoundError,
     );
     assert.equal(stub.requests.length, 0);
+  });
+
+  it("fails closed if the employee has no active assigned Supervisor", async () => {
+    for (const supervisor of ["missing", "inactive"] as const) {
+      const stub = createRequestDatabaseStub({ supervisor });
+      await assert.rejects(
+        submitOwnLeaveRequest(employeeActor, requestInput, stub.database),
+        { name: "LeaveRequestSupervisorNotFoundError" },
+      );
+      assert.equal(stub.requests.length, 0);
+    }
   });
 
   it("rejects nonexistent Leave Types and attachments belonging to another Employee", async () => {
@@ -159,5 +282,131 @@ describe("Leave request submission and self-service history", () => {
       getOwnLeaveRequest(employeeActor, "leave-request-2", stub.database),
       LeaveRequestNotFoundError,
     );
+  });
+});
+
+describe("Supervisor Leave approval workflow", () => {
+  async function submittedRequest() {
+    const stub = createRequestDatabaseStub();
+    const request = await submitOwnLeaveRequest(employeeActor, requestInput, stub.database);
+    return { stub, request };
+  }
+
+  it("lists only pending requests assigned to the authenticated Supervisor", async () => {
+    const { stub, request } = await submittedRequest();
+    await submitOwnLeaveRequest({ id: "employee-user-2", role: Role.EMPLOYEE }, requestInput, stub.database);
+    const assigned = await listSupervisorLeaveRequests(
+      { id: "supervisor-user-1", role: Role.SUPERVISOR },
+      stub.database,
+    );
+    const other = await listSupervisorLeaveRequests(
+      { id: "supervisor-user-2", role: Role.SUPERVISOR },
+      stub.database,
+    );
+    assert.deepEqual(assigned.map((item) => item.id), [request.id]);
+    assert.deepEqual(other.map((item) => item.id), ["leave-request-2"]);
+  });
+
+  it("rejects non-Supervisor reviewers and an unrelated Supervisor", async () => {
+    const { stub, request } = await submittedRequest();
+    await assert.rejects(
+      listSupervisorLeaveRequests({ id: "hr-user", role: Role.HR_ADMINISTRATOR }, stub.database),
+      LeaveApprovalAccessError,
+    );
+    await assert.rejects(
+      decideSupervisorLeaveRequest(
+        { id: "hr-user", role: Role.HR_ADMINISTRATOR },
+        request.id,
+        { action: "APPROVE" },
+        stub.database,
+      ),
+      LeaveApprovalAccessError,
+    );
+    await assert.rejects(
+      decideSupervisorLeaveRequest(
+        { id: "supervisor-user-2", role: Role.SUPERVISOR },
+        request.id,
+        { action: "APPROVE" },
+        stub.database,
+      ),
+      LeaveApprovalScopeError,
+    );
+    assert.equal(stub.requests[0]?.status, LeaveRequestStatus.PENDING);
+  });
+
+  it("approves a pending request, records reviewer/time and audit, and preserves the employee subject", async () => {
+    const { stub, request } = await submittedRequest();
+    const result = await decideSupervisorLeaveRequest(
+      { id: "supervisor-user-1", role: Role.SUPERVISOR },
+      request.id,
+      { action: "APPROVE" },
+      stub.database,
+    );
+    const saved = stub.requests[0];
+    assert.equal(result.status, LeaveRequestStatus.APPROVED);
+    assert.equal(saved?.status, LeaveRequestStatus.APPROVED);
+    assert.equal(saved?.reviewedById, "supervisor-user-1");
+    assert.ok(saved?.reviewedAt instanceof Date);
+    assert.equal(saved?.currentApprovalStage, null);
+    assert.equal(saved?.currentApproverId, null);
+    assert.equal(saved?.employeeId, "employee-1");
+    assert.equal(stub.audits.at(-1)?.employeeId, "employee-user-1");
+    assert.equal(stub.audits.at(-1)?.actorId, "supervisor-user-1");
+    assert.equal(stub.audits.at(-1)?.actionType, "LEAVE_REQUEST_APPROVED");
+    assert.deepEqual(stub.attendanceAndBalanceWrites, []);
+    assert.deepEqual(stub.audits.at(-1)?.previousValues, {
+      leaveRequestId: request.id,
+      status: "PENDING",
+      currentApprovalStage: "SUPERVISOR",
+      currentApproverId: "supervisor-user-1",
+    });
+    assert.equal((stub.audits.at(-1)?.newValues as Record<string, unknown>)?.status, "APPROVED");
+  });
+
+  it("rejects a pending request, records the rejection note and audit", async () => {
+    const { stub, request } = await submittedRequest();
+    await decideSupervisorLeaveRequest(
+      { id: "supervisor-user-1", role: Role.SUPERVISOR },
+      request.id,
+      { action: "REJECT", reason: "Insufficient supporting details" },
+      stub.database,
+    );
+    assert.equal(stub.requests[0]?.status, LeaveRequestStatus.REJECTED);
+    assert.equal(stub.requests[0]?.reviewedById, "supervisor-user-1");
+    assert.ok(stub.requests[0]?.reviewedAt instanceof Date);
+    assert.equal(stub.requests[0]?.decisionReason, "Insufficient supporting details");
+    assert.equal(stub.audits.at(-1)?.actionType, "LEAVE_REQUEST_REJECTED");
+    assert.equal(stub.audits.at(-1)?.reason, "Insufficient supporting details");
+    assert.equal((stub.audits.at(-1)?.newValues as Record<string, unknown>)?.status, "REJECTED");
+    assert.deepEqual(stub.attendanceAndBalanceWrites, []);
+  });
+
+  it("does not permit a second decision and preserves leave request subject identity", async () => {
+    const { stub, request } = await submittedRequest();
+    const actor = { id: "supervisor-user-1", role: Role.SUPERVISOR };
+    await decideSupervisorLeaveRequest(actor, request.id, { action: "APPROVE" }, stub.database);
+    await assert.rejects(
+      decideSupervisorLeaveRequest(actor, request.id, { action: "REJECT" }, stub.database),
+      LeaveApprovalStageError,
+    );
+    assert.equal(stub.requests[0]?.employeeId, "employee-1");
+    assert.equal(stub.audits.length, 2);
+  });
+
+  it("does not overwrite a concurrent decision or create a duplicate audit", async () => {
+    const stub = createRequestDatabaseStub({ forceDecisionRace: true });
+    const request = await submitOwnLeaveRequest(employeeActor, requestInput, stub.database);
+    await assert.rejects(
+      decideSupervisorLeaveRequest(
+        { id: "supervisor-user-1", role: Role.SUPERVISOR },
+        request.id,
+        { action: "APPROVE" },
+        stub.database,
+      ),
+      LeaveApprovalStageError,
+    );
+    assert.equal(stub.requests[0]?.status, LeaveRequestStatus.REJECTED);
+    assert.equal(stub.requests[0]?.reviewedById, "other-reviewer");
+    assert.equal(stub.audits.length, 1);
   });
 });
