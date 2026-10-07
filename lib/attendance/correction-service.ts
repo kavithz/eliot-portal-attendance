@@ -453,6 +453,18 @@ export async function decideDailyAttendanceCorrection(
       select: { id: true },
     });
 
+    if (finalApproval) {
+      await transaction.notification.create({
+        data: {
+          userId: correction.employeeId,
+          title: "Attendance correction approved",
+          message: "Your attendance correction was approved.",
+          type: "ATTENDANCE_CORRECTION_APPROVED",
+        },
+        select: { id: true },
+      });
+    }
+
     return { id: correction.id, status, currentApprovalStage: nextStage };
   });
 }

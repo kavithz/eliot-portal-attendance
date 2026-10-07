@@ -64,6 +64,7 @@ function createDatabase(options: {
   daily?: TestDaily | null;
   requesterExists?: boolean;
   supervisorUserId?: string | null;
+  failDailyUpdate?: boolean;
 } = {}) {
   const sourceDaily = options.daily === undefined ? originalDaily : options.daily;
   const daily = sourceDaily ? structuredClone(sourceDaily) : null;
@@ -75,6 +76,7 @@ function createDatabase(options: {
   const rawBefore = structuredClone(rawPunches);
   const requests: Array<Record<string, unknown>> = [];
   const audits: Array<Record<string, unknown>> = [];
+  const notifications: Array<Record<string, unknown>> = [];
   const rawMutations: string[] = [];
   const correctionQueries: unknown[] = [];
   const users = new Set(options.requesterExists === false ? [] : ["user-1", "supervisor-user", "hr-user", "other-supervisor"]);
@@ -92,8 +94,8 @@ function createDatabase(options: {
       findUnique: async ({ where }: { where: { id: string } }) => users.has(where.id) ? { id: where.id, role: roles.get(where.id) } : null,
     },
     employee: {
-      findUnique: async ({ where }: { where: { id: string } }) => where.id === "employee-1" ? ({
-        id: "employee-1",
+      findUnique: async ({ where }: { where: { id: string } }) => where.id === daily?.employee.id ? ({
+        id: where.id,
         user: { timeZone: "Asia/Colombo" },
         shift: {
           id: "shift-1",
@@ -119,7 +121,8 @@ function createDatabase(options: {
       },
       updateMany: async ({ where, data }: { where: { id: string; firstIn?: Date | null; lastOut?: Date | null }; data: Record<string, unknown> }) => {
         if (
-          !daily
+          options.failDailyUpdate
+          || !daily
           || daily.id !== where.id
           || (where.firstIn !== undefined && daily.firstIn?.getTime() !== where.firstIn?.getTime())
           || (where.lastOut !== undefined && daily.lastOut?.getTime() !== where.lastOut?.getTime())
@@ -188,6 +191,12 @@ function createDatabase(options: {
         return { id: `audit-${audits.length}` };
       },
     },
+    notification: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        notifications.push(structuredClone(data));
+        return { id: `notification-${notifications.length}` };
+      },
+    },
   };
   const database = {
     $transaction: async <T>(operation: (tx: typeof transaction) => Promise<T>) => operation(transaction),
@@ -197,6 +206,7 @@ function createDatabase(options: {
     database,
     requests,
     audits,
+    notifications,
     rawMutations,
     rawPunches,
     rawBefore,
@@ -445,6 +455,7 @@ describe("attendance correction approvals", () => {
     assert.equal(stub.audits.at(-1)?.actionType, "ATTENDANCE_CORRECTION_SUPERVISOR_APPROVED");
     assert.equal(stub.audits.at(-1)?.actorId, supervisorActor.id);
     assert.equal(stub.audits.at(-1)?.correctionRequestId, request.id);
+    assert.deepEqual(stub.notifications, []);
   });
 
   it("allows the assigned Supervisor to reject and records the rejection", async () => {
@@ -478,6 +489,20 @@ describe("attendance correction approvals", () => {
     assert.equal(request.currentApprovalStage, AttendanceCorrectionApprovalStage.HR);
     const items = await listDailyAttendanceCorrections({ id: "hr-user", role: Role.HR_ADMINISTRATOR }, stub.database);
     assert.equal(items.length, 1);
+    assert.deepEqual(stub.notifications, []);
+    const result = await decideDailyAttendanceCorrection(
+      { id: "hr-user", role: Role.HR_ADMINISTRATOR },
+      request.id,
+      { action: "APPROVE" },
+      stub.database,
+    );
+    assert.equal(result.status, AttendanceCorrectionStatus.APPROVED);
+    assert.deepEqual(stub.notifications, [{
+      userId: "subject-user",
+      title: "Attendance correction approved",
+      message: "Your attendance correction was approved.",
+      type: "ATTENDANCE_CORRECTION_APPROVED",
+    }]);
   });
 
   it("lets HR approve the final correction and applies only requested daily values", async () => {
@@ -507,6 +532,41 @@ describe("attendance correction approvals", () => {
     assert.equal(stub.audits.at(-1)?.correctionRequestId, request.id);
     assert.equal(stub.audits.at(-1)?.actionType, "ATTENDANCE_CORRECTION_HR_APPROVED");
     assert.equal(stub.audits.at(-1)?.reason, "Forgot to punch out");
+    assert.equal(stub.notifications.length, 1);
+    assert.deepEqual(stub.notifications[0], {
+      userId: "user-1",
+      title: "Attendance correction approved",
+      message: "Your attendance correction was approved.",
+      type: "ATTENDANCE_CORRECTION_APPROVED",
+    });
+    await assert.rejects(
+      decideDailyAttendanceCorrection(
+        { id: "hr-user", role: Role.HR_ADMINISTRATOR },
+        request.id,
+        { action: "APPROVE" },
+        stub.database,
+      ),
+      DailyAttendanceCorrectionStageError,
+    );
+    assert.equal(stub.notifications.length, 1);
+  });
+
+  it("does not notify at Supervisor approval or after a failed finalization", async () => {
+    const stub = createDatabase({ failDailyUpdate: true });
+    const request = await employeeCorrection(stub);
+    await decideDailyAttendanceCorrection(supervisorActor, request.id, { action: "APPROVE" }, stub.database);
+    assert.deepEqual(stub.notifications, []);
+
+    await assert.rejects(
+      decideDailyAttendanceCorrection(
+        { id: "hr-user", role: Role.HR_ADMINISTRATOR },
+        request.id,
+        { action: "APPROVE" },
+        stub.database,
+      ),
+      DailyAttendanceCorrectionConflictError,
+    );
+    assert.deepEqual(stub.notifications, []);
   });
 
   it("recalculates late and early metrics from corrected punches using the attendance engine", async () => {
@@ -593,6 +653,7 @@ describe("attendance correction approvals", () => {
       decideDailyAttendanceCorrection(supervisorActor, request.id, { action: "APPROVE" }, stub.database),
       DailyAttendanceCorrectionStageError,
     );
+    assert.deepEqual(stub.notifications, []);
   });
 
   it("rejects a reviewer whose role does not match the current approval stage", async () => {
