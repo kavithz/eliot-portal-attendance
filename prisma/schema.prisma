@@ -108,6 +108,7 @@ model AttendanceCorrectionRequest {
   sessionId        String?
   reason           String
   status           AttendanceCorrectionStatus @default(PENDING)
+  currentApprovalStage AttendanceCorrectionApprovalStage?
   originalMode     WorkMode?
   requestedMode    WorkMode?
   originalStartAt  DateTime?
@@ -133,6 +134,7 @@ model AttendanceCorrectionRequest {
 
   @@index([employeeId, status])
   @@index([status, requestedAt])
+  @@index([status, currentApprovalStage, requestedAt])
 }
 
 model AttendanceAuditLog {
@@ -405,6 +407,11 @@ enum AttendanceCorrectionStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum AttendanceCorrectionApprovalStage {
+  SUPERVISOR
+  HR
 }
 
 enum LeaveRequestStatus {

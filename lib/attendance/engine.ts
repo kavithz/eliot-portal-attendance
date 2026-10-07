@@ -8,6 +8,11 @@ export type RawAttendancePunch = {
   punchType: AttendancePunchType;
 };
 
+export type DailyAttendanceCorrectionValues = Partial<{
+  firstIn: Date | null;
+  lastOut: Date | null;
+}>;
+
 export type AttendanceEngineShift = {
   id: string;
   startTime: Date | null;
@@ -60,7 +65,11 @@ function minutesDifference(durationMs: number) {
 }
 
 export function attendanceDailyWorkingHoursForStorage(workingHours: number | null) {
-  return workingHours !== null && Number.isInteger(workingHours * 100) ? workingHours : null;
+  if (workingHours === null || !Number.isFinite(workingHours)) return null;
+  const hundredths = workingHours * 100;
+  return Math.abs(hundredths - Math.round(hundredths)) <= Number.EPSILON * Math.max(1, Math.abs(hundredths))
+    ? workingHours
+    : null;
 }
 
 export function calculateDailyAttendance(input: {
@@ -69,6 +78,7 @@ export function calculateDailyAttendance(input: {
   timeZone: string;
   shift: AttendanceEngineShift;
   punches: readonly RawAttendancePunch[];
+  correction?: DailyAttendanceCorrectionValues;
 }): AttendanceEngineResult {
   const { employeeId, date, timeZone, shift } = input;
   const parsedDate = new Date(`${date}T00:00:00.000Z`);
@@ -96,12 +106,45 @@ export function calculateDailyAttendance(input: {
     );
   }
 
-  const punches = input.punches
+  let punches = input.punches
     .filter((punch) => validInstant(punch.timestamp)
       && punch.timestamp >= localDay.startAt
       && punch.timestamp < localDay.endAt)
     .slice()
     .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime() || left.id.localeCompare(right.id));
+
+  if (input.correction) {
+    for (const correctedTime of [input.correction.firstIn, input.correction.lastOut]) {
+      if (
+        correctedTime !== undefined
+        && correctedTime !== null
+        && (!validInstant(correctedTime) || correctedTime < localDay.startAt || correctedTime >= localDay.endAt)
+      ) {
+        throw new AttendanceEngineConfigurationError("Corrected attendance punches must remain within the employee-local attendance day.");
+      }
+    }
+
+    const correctEndpoint = (
+      punchType: AttendancePunchType,
+      timestamp: Date | null | undefined,
+      endpoint: "firstIn" | "lastOut",
+    ) => {
+      if (timestamp === undefined) return;
+      const matchingIndexes = punches.flatMap((punch, index) => punch.punchType === punchType ? [index] : []);
+      const index = endpoint === "firstIn" ? matchingIndexes[0] : matchingIndexes.at(-1);
+      if (index === undefined) {
+        if (timestamp) punches.push({ id: `correction:${endpoint}`, timestamp, punchType });
+      } else if (timestamp === null) {
+        punches.splice(index, 1);
+      } else {
+        punches[index] = { ...punches[index], timestamp };
+      }
+    };
+
+    correctEndpoint("IN", input.correction.firstIn, "firstIn");
+    correctEndpoint("OUT", input.correction.lastOut, "lastOut");
+    punches = punches.sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime() || left.id.localeCompare(right.id));
+  }
 
   const punchIssues = new Set<AttendanceEngineResult["punchIssues"][number]>();
   const statusReasons = new Set<string>();

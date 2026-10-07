@@ -17,6 +17,7 @@ describe("role permissions", () => {
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "shift:manage"), true);
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "reports:read"), true);
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "leave:approve"), true);
+    assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "attendance:correction:approve"), true);
   });
 
   it("limits Department Manager permissions to the SRS department duties", () => {
@@ -28,6 +29,7 @@ describe("role permissions", () => {
 
   it("limits Supervisor permissions to assigned employee work and request review", () => {
     assert.equal(hasPermission(Role.SUPERVISOR, "attendance:assigned:read"), true);
+    assert.equal(hasPermission(Role.SUPERVISOR, "attendance:correction:approve"), true);
     assert.equal(hasPermission(Role.SUPERVISOR, "leave:approve"), true);
     assert.equal(hasPermission(Role.SUPERVISOR, "attendance:department:read"), false);
     assert.equal(hasPermission(Role.SUPERVISOR, "leave:manage"), false);

@@ -8,6 +8,7 @@ type AppUser = { name: string; email: string; role: Role };
 
 export function AppShell({ user, children }: { user: AppUser; children: React.ReactNode }) {
   const initials = user.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+  const canReviewCorrections = user.role === "SUPERVISOR" || user.role === "HR_ADMINISTRATOR";
 
   return (
     <div className="min-h-screen md:flex">
@@ -15,7 +16,7 @@ export function AppShell({ user, children }: { user: AppUser; children: React.Re
         <div className="flex h-[70px] items-center border-b border-white/15 px-6">
           <Image src="/eliot-logo.png" alt="ELIoT" width={1200} height={600} priority className="h-10 w-[92px] object-contain object-left" />
         </div>
-        <AppNav isAdmin={user.role === "ADMIN"} />
+        <AppNav isAdmin={user.role === "ADMIN"} canReviewCorrections={canReviewCorrections} />
         <div className="mt-auto border-t border-white/15 p-4">
           <p className="truncate text-xs font-semibold text-white">{user.name}</p>
           <p className="mt-1 truncate text-[11px] text-white/60">{user.email}</p>
@@ -24,7 +25,7 @@ export function AppShell({ user, children }: { user: AppUser; children: React.Re
       <div className="min-h-screen min-w-0 flex-1 md:ml-64">
         <header className="sticky top-0 z-30 flex h-[70px] items-center justify-between border-b border-[var(--line)] bg-white px-4 shadow-sm sm:px-7">
           <div className="flex items-center gap-3 md:hidden">
-            <MobileNav isAdmin={user.role === "ADMIN"} user={user} />
+            <MobileNav isAdmin={user.role === "ADMIN"} canReviewCorrections={canReviewCorrections} user={user} />
             <Image src="/eliot-logo.png" alt="ELIoT Attendance" width={1200} height={600} priority className="h-9 w-[82px] object-contain object-left" />
           </div>
           <div className="hidden min-w-0 items-center gap-3 md:flex">
