@@ -23,7 +23,7 @@ const employeeLinksWithSettings: NavigationLink[] = [
   settingsLink,
 ];
 
-function getLinks(isAdmin: boolean, canReadLeaveBalance: boolean, canReviewCorrections: boolean, canReviewLeave: boolean, canReadReports: boolean) {
+function getLinks(isAdmin: boolean, canReadLeaveBalance: boolean, canReviewCorrections: boolean, canReviewLeave: boolean, canReadReports: boolean, canSubmitOvertime: boolean, canReviewOvertime: boolean) {
   const links = isAdmin ? [
     ...employeeLinks.filter(({ href }) => href !== "/leave"),
     { href: "/admin", label: "Admin", icon: Shield },
@@ -38,11 +38,18 @@ function getLinks(isAdmin: boolean, canReadLeaveBalance: boolean, canReviewCorre
     const leaveIndex = links.findIndex(({ href }) => href === "/leave");
     links.splice(leaveIndex + 1, 0, { href: "/leave/balance", label: "Leave balance", icon: BriefcaseBusiness });
   }
+  if (!isAdmin && canSubmitOvertime) {
+    const leaveIndex = links.findIndex(({ href }) => href === "/leave");
+    links.splice(leaveIndex + 1, 0, { href: "/overtime", label: "Overtime", icon: Clock3 });
+  }
   if (canReviewCorrections) {
     links.splice(links.length - 1, 0, { href: "/approvals/attendance-corrections", label: "Correction approvals", icon: ClipboardList });
   }
   if (canReviewLeave) {
     links.splice(links.length - 1, 0, { href: "/approvals/leave", label: "Leave approvals", icon: BriefcaseBusiness });
+  }
+  if (canReviewOvertime) {
+    links.splice(links.length - 1, 0, { href: "/approvals/overtime", label: "Overtime approvals", icon: Clock3 });
   }
   if (canReadReports) {
     links.splice(links.length - 1, 0, { href: "/reports/attendance-corrections", label: "Correction report", icon: ChartNoAxesColumn });
@@ -52,7 +59,7 @@ function getLinks(isAdmin: boolean, canReadLeaveBalance: boolean, canReviewCorre
 
 function NavigationItems({ links, pathname, onNavigate }: { links: NavigationLink[]; pathname: string; onNavigate?: () => void }) {
   return links.map(({ href, label, icon: Icon }) => {
-    const active = href === "/admin" || href === "/admin/employees" || href === "/admin/leave-types" || href === "/admin/shifts" || href === "/admin/attendance/daily" || href === "/leave" || href.startsWith("/approvals/") ? pathname.startsWith(href) : pathname === href;
+    const active = href === "/admin" || href === "/admin/employees" || href === "/admin/leave-types" || href === "/admin/shifts" || href === "/admin/attendance/daily" || href === "/leave" || href === "/overtime" || href.startsWith("/approvals/") ? pathname.startsWith(href) : pathname === href;
     return (
       <Link key={href} href={href} onClick={onNavigate} aria-current={active ? "page" : undefined} className={`flex min-h-11 items-center gap-3 rounded-sm px-3 py-2.5 text-sm font-medium transition ${active ? "bg-white/10 text-white" : "text-slate-200/80 hover:bg-white/10 hover:text-white"}`}>
         <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
@@ -62,18 +69,18 @@ function NavigationItems({ links, pathname, onNavigate }: { links: NavigationLin
   });
 }
 
-export function AppNav({ isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports }: { isAdmin: boolean; canReadLeaveBalance: boolean; canReviewCorrections: boolean; canReviewLeave: boolean; canReadReports: boolean }) {
+export function AppNav({ isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canSubmitOvertime, canReviewOvertime }: { isAdmin: boolean; canReadLeaveBalance: boolean; canReviewCorrections: boolean; canReviewLeave: boolean; canReadReports: boolean; canSubmitOvertime: boolean; canReviewOvertime: boolean }) {
   const pathname = usePathname();
 
   return (
     <nav aria-label="Main navigation" className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       <p className="px-3 pb-2 text-xs font-semibold text-white/50">Workspace</p>
-      <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports)} pathname={pathname} /></div>
+      <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canSubmitOvertime, canReviewOvertime)} pathname={pathname} /></div>
     </nav>
   );
 }
 
-export function MobileNav({ isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, user }: { isAdmin: boolean; canReadLeaveBalance: boolean; canReviewCorrections: boolean; canReviewLeave: boolean; canReadReports: boolean; user: { name: string; email: string } }) {
+export function MobileNav({ isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canSubmitOvertime, canReviewOvertime, user }: { isAdmin: boolean; canReadLeaveBalance: boolean; canReviewCorrections: boolean; canReviewLeave: boolean; canReadReports: boolean; canSubmitOvertime: boolean; canReviewOvertime: boolean; user: { name: string; email: string } }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -101,7 +108,7 @@ export function MobileNav({ isAdmin, canReadLeaveBalance, canReviewCorrections, 
             </div>
             <nav aria-label="Mobile main navigation" className="flex-1 overflow-y-auto px-4 py-4">
               <p className="px-3 pb-2 text-xs font-semibold text-white/50">Workspace</p>
-              <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports)} pathname={pathname} onNavigate={() => setOpen(false)} /></div>
+              <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canSubmitOvertime, canReviewOvertime)} pathname={pathname} onNavigate={() => setOpen(false)} /></div>
             </nav>
             <div className="border-t border-white/15 p-4">
               <p className="truncate text-xs font-semibold">{user.name}</p>
