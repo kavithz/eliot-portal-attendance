@@ -55,6 +55,11 @@ export default async function DashboardPage() {
             Request Overtime
           </Link>
         )}
+        {user.role === "EMPLOYEE" && hasPermission(user.role, "wfh:submit") && (
+          <Link href="/wfh/new" className="inline-flex h-10 items-center rounded-md border border-[var(--line)] bg-white px-4 text-sm font-semibold text-[var(--ink)] transition hover:bg-zinc-50">
+            Request WFH
+          </Link>
+        )}
       </div>
 
       <AttendanceToday activeSession={activeSession} previousDayActiveSession={previousDayActiveSession} activeSessionTiming={activeSessionTiming} previousDayActiveSessionTiming={previousDayActiveSessionTiming} day={day} attendanceDate={date} timeZone={user.timeZone} invalidSessions={invalidSessions} completedSessionToday={completedSessionToday} />

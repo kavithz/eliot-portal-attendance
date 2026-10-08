@@ -18,6 +18,8 @@ export type Permission =
   | "leave:balance:self:read"
   | "overtime:submit"
   | "overtime:approve"
+  | "wfh:submit"
+  | "wfh:approve"
   | "shift:manage"
   | "reports:read"
   | "reports:department:read"
@@ -32,6 +34,7 @@ const rolePermissions: Record<Exclude<Role, "ADMIN">, readonly Permission[]> = {
     "leave:request:self:read",
     "leave:balance:self:read",
     "overtime:submit",
+    "wfh:submit",
     "roster:self:read",
     "notifications:self:read",
   ],
@@ -52,6 +55,7 @@ const rolePermissions: Record<Exclude<Role, "ADMIN">, readonly Permission[]> = {
     "attendance:correction:approve",
     "leave:approve",
     "overtime:approve",
+    "wfh:approve",
     "reports:department:read",
   ],
   SUPERVISOR: [
@@ -62,6 +66,7 @@ const rolePermissions: Record<Exclude<Role, "ADMIN">, readonly Permission[]> = {
     "attendance:correction:approve",
     "leave:approve",
     "overtime:approve",
+    "wfh:approve",
   ],
 };
 

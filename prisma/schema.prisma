@@ -36,6 +36,8 @@ model User {
   leaveRequestsReviewed LeaveRequest[] @relation("LeaveRequestReviewer")
   overtimeRequestsToReview OvertimeRequest[] @relation("OvertimeRequestCurrentApprover")
   overtimeRequestsReviewed OvertimeRequest[] @relation("OvertimeRequestReviewer")
+  workFromHomeRequestsToReview WorkFromHomeRequest[] @relation("WorkFromHomeRequestCurrentApprover")
+  workFromHomeRequestsReviewed WorkFromHomeRequest[] @relation("WorkFromHomeRequestReviewer")
 
   @@index([role])
 }
@@ -164,6 +166,31 @@ model OvertimeRequest {
   @@index([status, currentApprovalStage, currentApproverId, createdAt])
 }
 
+model WorkFromHomeRequest {
+  id                   String                    @id @default(cuid())
+  employeeId           String
+  date                 DateTime                  @db.Date
+  startAt              DateTime                  @db.Timestamptz(3)
+  endAt                DateTime                  @db.Timestamptz(3)
+  reason               String                    @db.Text
+  workLocation         String                    @db.Text
+  status               WorkFromHomeRequestStatus @default(PENDING)
+  currentApprovalStage WorkFromHomeApprovalStage? @default(SUPERVISOR)
+  currentApproverId    String?
+  decisionReason       String?                   @db.Text
+  reviewedById         String?
+  reviewedAt           DateTime?                 @db.Timestamptz(3)
+  createdAt            DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime                  @updatedAt @db.Timestamptz(3)
+  employee             Employee                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  currentApprover      User?                     @relation("WorkFromHomeRequestCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+  reviewedBy           User?                     @relation("WorkFromHomeRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, status, createdAt])
+  @@index([status, currentApprovalStage, currentApproverId, createdAt])
+  @@map("wfh_requests")
+}
+
 model AttendanceAuditLog {
   id                  String       @id @default(cuid())
   employeeId          String?
@@ -246,6 +273,7 @@ model Employee {
   attendanceRaw      AttendanceRaw[]
   attendanceDaily    AttendanceDaily[]
   overtimeRequests   OvertimeRequest[]
+  workFromHomeRequests WorkFromHomeRequest[]
 
   @@index([departmentId])
   @@index([designationId])
@@ -457,6 +485,17 @@ enum OvertimeRequestStatus {
 }
 
 enum OvertimeApprovalStage {
+  SUPERVISOR
+  MANAGER
+}
+
+enum WorkFromHomeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum WorkFromHomeApprovalStage {
   SUPERVISOR
   MANAGER
 }
