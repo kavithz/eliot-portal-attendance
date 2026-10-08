@@ -7,11 +7,13 @@ import {
   calculateAvailableLeaveBalance,
   getLeaveEntitlement,
   InsufficientLeaveBalanceError,
+  LeaveBalanceAccessError,
   LeaveEntitlementAccessError,
   LeaveEntitlementEmployeeNotFoundError,
   LeaveEntitlementTypeNotFoundError,
   LeaveUsageEmployeeConflictError,
   LeaveUsageSourceConflictError,
+  listOwnLeaveBalanceCredits,
   setLeaveEntitlement,
 } from "@/lib/leave/balance-service";
 import { leaveEntitlementSchema } from "@/lib/leave/validation";
@@ -79,6 +81,33 @@ function createEntitlementDatabaseStub() {
 
 function entitlementKey(key: { employeeId: string; leaveTypeId: string; periodStart: Date; periodEnd: Date }) {
   return `${key.employeeId}:${key.leaveTypeId}:${key.periodStart.toISOString()}:${key.periodEnd.toISOString()}`;
+}
+
+function createOwnBalanceDatabaseStub(employeeExists = true, entitlements = [{
+  id: "entitlement-1",
+  periodStart: new Date("2026-04-01T00:00:00.000Z"),
+  periodEnd: new Date("2027-03-31T00:00:00.000Z"),
+  openingBalance: "2",
+  entitlement: "14",
+  carryForward: "1.5",
+  leaveType: { id: "leave-type-1", name: "Annual" },
+}]) {
+  const calls: { employee?: unknown; entitlements?: unknown } = {};
+  const database = {
+    employee: {
+      findUnique: async (args: unknown) => {
+        calls.employee = args;
+        return employeeExists ? { id: "employee-1" } : null;
+      },
+    },
+    leaveEntitlement: {
+      findMany: async (args: unknown) => {
+        calls.entitlements = args;
+        return entitlements;
+      },
+    },
+  } as never;
+  return { database, calls };
 }
 
 describe("Leave entitlement validation", () => {
@@ -149,6 +178,57 @@ describe("Leave entitlement management", () => {
 });
 
 describe("Leave balance calculation", () => {
+  it("lists only the authenticated Employee's entitlement credits for periods active today", async () => {
+    const stub = createOwnBalanceDatabaseStub();
+    const result = await listOwnLeaveBalanceCredits(employee, stub.database);
+    const where = (stub.calls.entitlements as { where: { periodStart: { lte: Date }; periodEnd: { gte: Date }; employeeId: string } }).where;
+    const currentDate = new Date();
+    const expectedAsOf = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), currentDate.getUTCDate()));
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0]?.leaveType.name, "Annual");
+    assert.deepEqual(stub.calls.employee, {
+      where: { userId: employee.id },
+      select: { id: true },
+    });
+    assert.equal(where.employeeId, "employee-1");
+    assert.deepEqual(where.periodStart, { lte: expectedAsOf });
+    assert.deepEqual(where.periodEnd, { gte: expectedAsOf });
+    assert.deepEqual((stub.calls.entitlements as { orderBy: unknown }).orderBy, [
+      { leaveType: { name: "asc" } },
+      { periodStart: "asc" },
+      { id: "asc" },
+    ]);
+  });
+
+  it("returns no balance rows when the Employee has no active entitlement period", async () => {
+    const stub = createOwnBalanceDatabaseStub(true, []);
+    assert.deepEqual(await listOwnLeaveBalanceCredits(employee, stub.database), []);
+  });
+
+  it("rejects non-Employee and unauthenticated balance access before querying data", async () => {
+    const stub = createOwnBalanceDatabaseStub();
+    for (const actor of [
+      null,
+      { id: "admin-user", role: Role.ADMIN },
+      { id: "hr-user", role: Role.HR_ADMINISTRATOR },
+      { id: "manager-user", role: Role.DEPARTMENT_MANAGER },
+      { id: "supervisor-user", role: Role.SUPERVISOR },
+    ]) {
+      await assert.rejects(listOwnLeaveBalanceCredits(actor, stub.database), LeaveBalanceAccessError);
+    }
+    assert.deepEqual(stub.calls, {});
+  });
+
+  it("reports an authenticated Employee without a linked employee record", async () => {
+    const stub = createOwnBalanceDatabaseStub(false);
+    await assert.rejects(
+      listOwnLeaveBalanceCredits(employee, stub.database),
+      LeaveEntitlementEmployeeNotFoundError,
+    );
+    assert.equal(stub.calls.entitlements, undefined);
+  });
+
   it("calculates opening balance plus entitlement and carry-forward minus approved usage", () => {
     assert.equal(
       calculateAvailableLeaveBalance({

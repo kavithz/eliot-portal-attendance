@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Prisma, type PrismaClient, type Role } from "@prisma/client";
+import { hasPermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { calculateEmployeeLeaveWorkdays, type LeaveHolidayResolver } from "@/lib/leave/workdays";
 import {
@@ -11,9 +12,18 @@ import {
 } from "@/lib/leave/validation";
 
 type LeaveBalanceAdmin = { id: string; role: Role };
+type LeaveBalanceEmployee = { id: string; role: Role };
 type LeaveEntitlementReadDatabase = Pick<PrismaClient, "leaveEntitlement">;
+type OwnLeaveBalanceReadDatabase = Pick<PrismaClient, "employee" | "leaveEntitlement">;
 type LeaveEntitlementTransactionDatabase = Pick<PrismaClient, "$transaction">;
 type LeaveQuantity = Prisma.Decimal | string | number;
+
+export class LeaveBalanceAccessError extends Error {
+  constructor() {
+    super("You do not have permission to access this Employee leave balance.");
+    this.name = "LeaveBalanceAccessError";
+  }
+}
 
 export class LeaveEntitlementAccessError extends Error {
   constructor() {
@@ -61,12 +71,54 @@ function assertAdmin(admin: LeaveBalanceAdmin) {
   if (admin.role !== "ADMIN") throw new LeaveEntitlementAccessError();
 }
 
+function assertEmployeeSelfAccess(actor: LeaveBalanceEmployee | null): asserts actor is LeaveBalanceEmployee {
+  if (
+    !actor
+    || actor.role !== "EMPLOYEE"
+    || !hasPermission(actor.role, "leave:balance:self:read")
+  ) {
+    throw new LeaveBalanceAccessError();
+  }
+}
+
 function asDecimal(value: LeaveQuantity) {
   return value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
 }
 
 function asDatabaseDate(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
+}
+
+export async function listOwnLeaveBalanceCredits(
+  actor: LeaveBalanceEmployee | null,
+  database: OwnLeaveBalanceReadDatabase = prisma,
+) {
+  assertEmployeeSelfAccess(actor);
+  const employee = await database.employee.findUnique({
+    where: { userId: actor.id },
+    select: { id: true },
+  });
+  if (!employee) throw new LeaveEntitlementEmployeeNotFoundError();
+
+  const currentDate = new Date();
+  const asOf = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), currentDate.getUTCDate()));
+  return database.leaveEntitlement.findMany({
+    where: {
+      employeeId: employee.id,
+      periodStart: { lte: asOf },
+      periodEnd: { gte: asOf },
+    },
+    select: {
+      id: true,
+      periodStart: true,
+      periodEnd: true,
+      openingBalance: true,
+      entitlement: true,
+      carryForward: true,
+      leaveType: { select: { id: true, name: true } },
+    },
+    orderBy: [{ leaveType: { name: "asc" } }, { periodStart: "asc" }, { id: "asc" }],
+  });
 }
 
 export function calculateAvailableLeaveBalance(
