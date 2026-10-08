@@ -1,11 +1,13 @@
 import { formatInTimeZone } from "date-fns-tz";
 import { AttendanceCorrectionStatus } from "@prisma/client";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   attendanceCorrectionReportFiltersSchema,
   listAttendanceCorrectionReport,
 } from "@/lib/attendance/correction-report";
-import { requirePagePermission } from "@/lib/auth/session";
+import { hasPermission } from "@/lib/auth/permissions";
+import { requirePageUser } from "@/lib/auth/session";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -42,7 +44,8 @@ export default async function AttendanceCorrectionReportPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const actor = await requirePagePermission("reports:read");
+  const actor = await requirePageUser();
+  if (!hasPermission(actor.role, "reports:read")) redirect("/dashboard");
   const params = await searchParams;
   const filterResult = attendanceCorrectionReportFiltersSchema.safeParse({
     status: single(params.status) || "ALL",
