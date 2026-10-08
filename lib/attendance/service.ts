@@ -157,12 +157,18 @@ export async function getEmployeeAttendanceDashboard(
     }),
   ]);
 
-  const grouped = groupSessionsByEmployeeLocalDay(sessions, employee.timeZone);
+  const todaySessions = sessions.filter((session) => session.startAt >= startAt && session.startAt < endAt);
+  const grouped = groupSessionsByEmployeeLocalDay(todaySessions, employee.timeZone);
   const completedSessionToday = sessions.some((session) => session.endAt && session.endAt >= startAt && session.endAt < endAt);
   return {
     date,
-    activeSession,
-    day: grouped.days[0] ?? { date, sessions: [], totalWorkedMs: 0 },
+    activeSession: activeSession && activeSession.startAt >= startAt && activeSession.startAt < endAt
+      ? activeSession
+      : null,
+    previousDayActiveSession: activeSession && activeSession.startAt < startAt
+      ? activeSession
+      : null,
+    day: grouped.days.find((day) => day.date === date) ?? { date, sessions: [], totalWorkedMs: 0 },
     completedSessionToday,
     invalidSessions: grouped.invalidSessions,
   };

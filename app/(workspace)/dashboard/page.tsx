@@ -1,6 +1,7 @@
 import { ArrowUpRight, CalendarCheck2, ClockAlert, Coffee, House, TimerOff } from "lucide-react";
 import Link from "next/link";
 import { AttendanceToday } from "@/components/attendance-today";
+import { hasPermission } from "@/lib/auth/permissions";
 import { getEmployeeAttendanceDashboard } from "@/lib/attendance/service";
 import { classifyWorkSession } from "@/lib/attendance/schedule";
 import { requirePageUser } from "@/lib/auth/session";
@@ -15,8 +16,18 @@ const futureMetrics = [
 
 export default async function DashboardPage() {
   const user = await requirePageUser();
-  const { date, activeSession, day, completedSessionToday, invalidSessions } = await getEmployeeAttendanceDashboard(user);
+  const {
+    date,
+    activeSession,
+    previousDayActiveSession,
+    day,
+    completedSessionToday,
+    invalidSessions,
+  } = await getEmployeeAttendanceDashboard(user);
   const activeSessionTiming = activeSession ? classifyWorkSession(activeSession, user.timeZone) : null;
+  const previousDayActiveSessionTiming = previousDayActiveSession
+    ? classifyWorkSession(previousDayActiveSession, user.timeZone)
+    : null;
 
   return (
     <div className="space-y-7">
@@ -29,9 +40,14 @@ export default async function DashboardPage() {
         <Link href="/attendance" className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3.5 text-sm font-medium text-[var(--ink)] transition hover:bg-zinc-50">
           View history <ArrowUpRight size={16} aria-hidden="true" />
         </Link>
+        {user.role === "EMPLOYEE" && hasPermission(user.role, "leave:submit") && (
+          <Link href="/leave/new" className="inline-flex h-10 items-center rounded-md bg-[var(--action)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--action-hover)]">
+            Apply for Leave
+          </Link>
+        )}
       </div>
 
-      <AttendanceToday activeSession={activeSession} activeSessionTiming={activeSessionTiming} day={day} attendanceDate={date} timeZone={user.timeZone} invalidSessions={invalidSessions} completedSessionToday={completedSessionToday} />
+      <AttendanceToday activeSession={activeSession} previousDayActiveSession={previousDayActiveSession} activeSessionTiming={activeSessionTiming} previousDayActiveSessionTiming={previousDayActiveSessionTiming} day={day} attendanceDate={date} timeZone={user.timeZone} invalidSessions={invalidSessions} completedSessionToday={completedSessionToday} />
 
       <section aria-labelledby="summary-title">
         <div className="mb-3 flex items-end justify-between gap-3">
