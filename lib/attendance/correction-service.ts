@@ -17,6 +17,22 @@ import {
 
 type AttendanceCorrectionActor = { id: string; role: Role } | null;
 type AttendanceCorrectionDatabase = Pick<PrismaClient, "$transaction">;
+type OwnCorrectionDailyAttendance = {
+  id: string;
+  date: Date;
+  firstIn: Date | null;
+  lastOut: Date | null;
+  status: string | null;
+};
+type OwnCorrectionAttendanceReadDatabase = {
+  attendanceDaily: {
+    findMany: (args: {
+      where: Prisma.AttendanceDailyWhereInput;
+      select: { id: true; date: true; firstIn: true; lastOut: true; status: true };
+      orderBy: Array<{ date: "desc" } | { id: "desc" }>;
+    }) => Promise<OwnCorrectionDailyAttendance[]>;
+  };
+};
 
 const dailyCorrectionValuesSchema = z.object({
   firstIn: z.string().datetime({ offset: true }).nullable().optional(),
@@ -90,6 +106,36 @@ export class DailyAttendanceCorrectionSubjectUserNotFoundError extends Error {
     super("The Employee for this attendance record is not linked to a User account.");
     this.name = "DailyAttendanceCorrectionSubjectUserNotFoundError";
   }
+}
+
+export async function listOwnDailyAttendanceForCorrection(
+  actor: AttendanceCorrectionActor,
+  database: OwnCorrectionAttendanceReadDatabase = prisma,
+) {
+  if (
+    !actor
+    || actor.role !== "EMPLOYEE"
+    || !hasPermission(actor.role, "attendance:correction:submit")
+  ) {
+    throw new DailyAttendanceCorrectionAccessError();
+  }
+
+  return database.attendanceDaily.findMany({
+    where: {
+      employee: {
+        userId: actor.id,
+        supervisor: { user: { role: "SUPERVISOR", isActive: true } },
+      },
+    },
+    select: {
+      id: true,
+      date: true,
+      firstIn: true,
+      lastOut: true,
+      status: true,
+    },
+    orderBy: [{ date: "desc" }, { id: "desc" }],
+  });
 }
 
 function originalAttendanceSnapshot(

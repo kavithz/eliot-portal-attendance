@@ -16,6 +16,7 @@ import {
   DailyAttendanceCorrectionTargetNotFoundError,
   decideDailyAttendanceCorrection,
   dailyAttendanceCorrectionInputSchema,
+  listOwnDailyAttendanceForCorrection,
   listDailyAttendanceCorrections,
   submitDailyAttendanceCorrection,
 } from "./correction-service";
@@ -231,6 +232,58 @@ describe("daily attendance correction request validation", () => {
       requestedValues: { lastOut: "2026-10-05T12:00:00.000Z" },
       reason: "   ",
     }).success, false);
+  });
+});
+
+describe("employee correction attendance selection", () => {
+  it("lists only persisted daily records scoped to the authenticated employee and active supervisor", async () => {
+    let query: unknown;
+    const expected = [{
+      id: "daily-1",
+      date: originalDaily.date,
+      firstIn: originalDaily.firstIn,
+      lastOut: originalDaily.lastOut,
+      status: originalDaily.status,
+    }];
+    const database: NonNullable<Parameters<typeof listOwnDailyAttendanceForCorrection>[1]> = {
+      attendanceDaily: {
+        findMany: async (args) => {
+          query = args.where;
+          return expected;
+        },
+      },
+    };
+
+    const records = await listOwnDailyAttendanceForCorrection(employeeActor, database);
+    assert.deepEqual(records, expected);
+    assert.deepEqual(query, {
+      employee: {
+        userId: employeeActor.id,
+        supervisor: { user: { role: "SUPERVISOR", isActive: true } },
+      },
+    });
+  });
+
+  it("rejects users without the employee correction permission before querying", async () => {
+    let queried = false;
+    const database: NonNullable<Parameters<typeof listOwnDailyAttendanceForCorrection>[1]> = {
+      attendanceDaily: {
+        findMany: async () => {
+          queried = true;
+          return [];
+        },
+      },
+    };
+
+    await assert.rejects(
+      listOwnDailyAttendanceForCorrection({ id: "manager-user", role: Role.DEPARTMENT_MANAGER }, database),
+      DailyAttendanceCorrectionAccessError,
+    );
+    await assert.rejects(
+      listOwnDailyAttendanceForCorrection({ id: "admin-user", role: Role.ADMIN }, database),
+      DailyAttendanceCorrectionAccessError,
+    );
+    assert.equal(queried, false);
   });
 });
 

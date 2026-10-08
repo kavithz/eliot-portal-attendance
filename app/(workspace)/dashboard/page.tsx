@@ -45,6 +45,11 @@ export default async function DashboardPage() {
             Apply for Leave
           </Link>
         )}
+        {user.role === "EMPLOYEE" && hasPermission(user.role, "attendance:correction:submit") && (
+          <Link href="/attendance/corrections" className="inline-flex h-10 items-center rounded-md border border-[var(--line)] bg-white px-4 text-sm font-semibold text-[var(--ink)] transition hover:bg-zinc-50">
+            Request Attendance Correction
+          </Link>
+        )}
       </div>
 
       <AttendanceToday activeSession={activeSession} previousDayActiveSession={previousDayActiveSession} activeSessionTiming={activeSessionTiming} previousDayActiveSessionTiming={previousDayActiveSessionTiming} day={day} attendanceDate={date} timeZone={user.timeZone} invalidSessions={invalidSessions} completedSessionToday={completedSessionToday} />
