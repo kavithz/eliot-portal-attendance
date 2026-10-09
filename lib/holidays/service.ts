@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Prisma, PrismaClient, Role } from "@prisma/client";
+import { hasPermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { holidayInputSchema, holidayListQuerySchema } from "./validation";
 
@@ -40,7 +41,7 @@ function assertCanView(actor: HolidayActor): asserts actor is { role: Role } {
 }
 
 function assertCanManage(actor: HolidayActor): asserts actor is { role: Role } {
-  if (!actor || (actor.role !== "ADMIN" && actor.role !== "HR_ADMINISTRATOR")) {
+  if (!actor || !hasPermission(actor.role, "holiday:manage")) {
     throw new HolidayAccessError();
   }
 }

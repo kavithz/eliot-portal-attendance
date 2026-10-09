@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requirePermission } from "@/lib/auth/session";
+import { hasPermission } from "@/lib/auth/permissions";
+import { requireUser } from "@/lib/auth/session";
 import {
   createHoliday,
   deleteHoliday,
@@ -40,7 +41,8 @@ export async function saveHolidayAction(
   formData: FormData,
 ): Promise<HolidayActionState> {
   try {
-    const actor = await requirePermission("holiday:manage");
+    const actor = await requireUser();
+    if (!hasPermission(actor.role, "holiday:manage")) throw new HolidayAccessError();
     if (id) await updateHoliday(actor, id, holidayValues(formData));
     else await createHoliday(actor, holidayValues(formData));
   } catch (error) {
@@ -53,8 +55,9 @@ export async function saveHolidayAction(
 }
 
 export async function deleteHolidayAction(id: string) {
-  const actor = await requirePermission("holiday:manage");
+  const actor = await requireUser();
   try {
+    if (!hasPermission(actor.role, "holiday:manage")) throw new HolidayAccessError();
     await deleteHoliday(actor, id);
   } catch (error) {
     redirect(`/holidays?error=${encodeURIComponent(actionError(error))}`);
