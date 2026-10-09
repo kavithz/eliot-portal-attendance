@@ -11,6 +11,7 @@ type NavigationLink = { href: string; label: string; icon: LucideIcon };
 const employeeLinks: NavigationLink[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/attendance", label: "Attendance", icon: CalendarDays },
+  { href: "/holidays", label: "Holiday calendar", icon: CalendarDays },
   { href: "/leave", label: "Leave", icon: BriefcaseBusiness },
   { href: "/reports", label: "My reports", icon: ChartNoAxesColumn },
   { href: "/notifications", label: "Notifications", icon: Bell },

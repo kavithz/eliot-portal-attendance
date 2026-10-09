@@ -27,6 +27,7 @@ export type MonthlyEmployeeReport = {
     earlyOutDays?: number;
     missingPunchDays?: number;
     weekendDays?: number;
+    holidayDays?: number;
     undeterminedDays?: number;
     totalCalculatedDays?: number;
   };
@@ -48,6 +49,7 @@ function summarizeCalculatedDailyStatuses(dailySummaries: MonthlyDailyStatus[]) 
     EARLY_OUT: 0,
     MISSING_PUNCH: 0,
     WEEKEND: 0,
+    HOLIDAY: 0,
     UNDETERMINED: 0,
   } as Record<Exclude<MonthlyDailyStatus["status"], null | undefined>, number>;
 
@@ -62,6 +64,7 @@ function summarizeCalculatedDailyStatuses(dailySummaries: MonthlyDailyStatus[]) 
     earlyOutDays: counts.EARLY_OUT,
     missingPunchDays: counts.MISSING_PUNCH,
     weekendDays: counts.WEEKEND,
+    holidayDays: counts.HOLIDAY,
     undeterminedDays: counts.UNDETERMINED,
     totalCalculatedDays: dailySummaries.filter((item) => item.status && item.status in counts).length,
   };
@@ -85,6 +88,14 @@ export function buildMonthWindow(month: string, timeZone: string) {
   };
 }
 
+function buildMonthDateWindow(month: string) {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return {
+    start: new Date(Date.UTC(year, monthIndex - 1, 1)),
+    end: new Date(Date.UTC(year, monthIndex, 1)),
+  };
+}
+
 export function buildEmployeeMonthlyReport(
   employee: { timeZone: string },
   month: string,
@@ -98,10 +109,7 @@ export function buildEmployeeMonthlyReport(
   });
 
   const calculatedStatusSummary = summarizeCalculatedDailyStatuses(
-    dailySummaries.filter((day) => {
-      const date = new Date(`${day.date}T00:00:00.000Z`);
-      return Number.isFinite(date.getTime()) && date >= window.start && date <= window.end;
-    }),
+    dailySummaries.filter((day) => day.date.slice(0, 7) === month),
   );
 
   const byDate = new Map<string, MonthlyDaySummary>();
@@ -143,6 +151,7 @@ export function buildEmployeeMonthlyReport(
 
 export async function getEmployeeMonthlyReport(employeeId: string, month: string, employee: { id: string; timeZone: string; name: string; email: string }) {
   const { start: monthStart, end: monthEnd } = buildMonthWindow(month, employee.timeZone);
+  const { start: dateStart, end: dateEnd } = buildMonthDateWindow(month);
   const [sessions, dailySummaries] = await Promise.all([
     prisma.workSession.findMany({
       where: {
@@ -160,7 +169,7 @@ export async function getEmployeeMonthlyReport(employeeId: string, month: string
     prisma.attendanceDaily.findMany({
       where: {
         employeeId,
-        date: { gte: new Date(`${month}-01T00:00:00.000Z`), lte: monthEnd },
+        date: { gte: dateStart, lt: dateEnd },
       },
       select: {
         date: true,
@@ -202,6 +211,7 @@ export async function getAdminMonthlyReport(month: string, employeeId?: string) 
   const rows = [] as Array<{ employee: { id: string; name: string; email: string; timeZone: string }; report: MonthlyEmployeeReport }>;
   for (const employee of employees) {
     const { start: monthStart, end: monthEnd } = buildMonthWindow(month, employee.timeZone);
+    const { start: dateStart, end: dateEnd } = buildMonthDateWindow(month);
     const [sessions, dailySummaries] = await Promise.all([
       prisma.workSession.findMany({
         where: {
@@ -214,7 +224,7 @@ export async function getAdminMonthlyReport(month: string, employeeId?: string) 
       prisma.attendanceDaily.findMany({
         where: {
           employeeId: employee.id,
-          date: { gte: new Date(`${month}-01T00:00:00.000Z`), lte: monthEnd },
+          date: { gte: dateStart, lt: dateEnd },
         },
         select: {
           date: true,

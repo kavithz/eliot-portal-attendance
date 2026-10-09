@@ -32,6 +32,7 @@ type ShiftOverrides = {
 function createHarness(
   raw: Array<{ id: string; timestamp: Date; punchType: "IN" | "OUT" }>,
   shiftOverrides: ShiftOverrides = {},
+  isOrganizationHoliday = false,
 ) {
   const rawBefore = raw.map(({ id, timestamp, punchType }) => [id, timestamp.toISOString(), punchType]);
   const dailyRows: Array<Record<string, unknown> & { id: string }> = [];
@@ -49,6 +50,11 @@ function createHarness(
       },
       attendanceRaw: {
         findMany: async () => raw,
+      },
+      holiday: {
+        findFirst: async ({ where }: { where: { branch: string; applicableEmployeeGroups: { isEmpty: boolean } } }) => (
+          isOrganizationHoliday && where.branch === "" && where.applicableEmployeeGroups.isEmpty ? { id: "holiday-1" } : null
+        ),
       },
       attendanceDaily: {
         findMany: async () => dailyRows.map(({ id }) => ({ id })),
@@ -291,6 +297,20 @@ describe("attendance engine persistence boundary", () => {
     assert.equal(result.attendanceDaily.status, "UNDETERMINED");
     assert.equal(result.attendanceDaily.firstIn, null);
     assert.equal(result.attendanceDaily.lastOut, null);
+  });
+
+  it("uses an organization-wide holiday status only when there are no punches", async () => {
+    const holiday = createHarness([], {}, true);
+    const holidayResult = await calculateAndPersistDailyAttendance("employee-1", "2026-06-15", holiday.database);
+    assert.equal(holidayResult.calculation.status, "HOLIDAY");
+    assert.equal(holidayResult.attendanceDaily.status, "HOLIDAY");
+
+    const workedHoliday = createHarness([
+      { id: "in", timestamp: new Date("2026-06-15T03:00:00.000Z"), punchType: "IN" },
+      { id: "out", timestamp: new Date("2026-06-15T12:00:00.000Z"), punchType: "OUT" },
+    ], {}, true);
+    const workedResult = await calculateAndPersistDailyAttendance("employee-1", "2026-06-15", workedHoliday.database);
+    assert.equal(workedResult.calculation.status, "PRESENT");
   });
 
   it("derives Weekend only when the assigned Shift has configured applicable days", async () => {

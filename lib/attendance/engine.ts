@@ -36,7 +36,7 @@ export type AttendanceEngineResult = {
   workingHours: number | null;
   lateMinutes: number | null;
   earlyMinutes: number | null;
-  status: "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "UNDETERMINED";
+  status: "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "HOLIDAY" | "UNDETERMINED";
   statusReasons: string[];
   workPeriods: Array<{ startAt: Date; endAt: Date; durationMs: number }>;
   breakPeriods: Array<{ startAt: Date; endAt: Date; durationMs: number }>;
@@ -79,6 +79,7 @@ export function calculateDailyAttendance(input: {
   shift: AttendanceEngineShift;
   punches: readonly RawAttendancePunch[];
   correction?: DailyAttendanceCorrectionValues;
+  holiday?: boolean;
 }): AttendanceEngineResult {
   const { employeeId, date, timeZone, shift } = input;
   const parsedDate = new Date(`${date}T00:00:00.000Z`);
@@ -236,9 +237,11 @@ export function calculateDailyAttendance(input: {
   statusReasons.add("The SRS does not define how late and early-departure thresholds affect status; configured grace and shift end determine Late and Early Out.");
   statusReasons.add("The SRS does not define the rounding algorithm; no rounding has been applied.");
   if (workPeriods.length === 0 && uniquePunches.length === 0) {
-    statusReasons.add(isScheduledWorkingDay === false
-      ? "No raw punches exist on a configured non-working day."
-      : "No raw punches exist for this employee-local date; absence cannot be distinguished from leave, WFH, holiday, or a non-working day.");
+    statusReasons.add(input.holiday
+      ? "No raw punches exist on an organization-wide holiday."
+      : isScheduledWorkingDay === false
+        ? "No raw punches exist on a configured non-working day."
+        : "No raw punches exist for this employee-local date; absence cannot be distinguished from leave, WFH, holiday, or a non-working day.");
   }
   if (hasUnresolvedSequence) statusReasons.add("Punch sequence is unusual; work-period calculation is unresolved.");
 
@@ -248,6 +251,8 @@ export function calculateDailyAttendance(input: {
     status = "MISSING_PUNCH";
   } else if (hasUnresolvedSequence) {
     statusReasons.add("Punch sequence is unusual; a daily status cannot be assigned safely.");
+  } else if (uniquePunches.length === 0 && input.holiday) {
+    status = "HOLIDAY";
   } else if (uniquePunches.length === 0 && isScheduledWorkingDay === false) {
     status = "WEEKEND";
   } else if (uniquePunches.length > 0 && isScheduledWorkingDay === false) {

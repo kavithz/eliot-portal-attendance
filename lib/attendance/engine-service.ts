@@ -79,6 +79,13 @@ async function calculateForEmployeeDay(
     orderBy: [{ timestamp: "asc" }, { id: "asc" }],
     select: { id: true, timestamp: true, punchType: true },
   });
+  const dateValue = new Date(`${date}T00:00:00.000Z`);
+  const holiday = "holiday" in transaction
+    ? await transaction.holiday.findFirst({
+        where: { date: dateValue, branch: "", applicableEmployeeGroups: { isEmpty: true } },
+        select: { id: true },
+      })
+    : null;
   const calculation = calculateDailyAttendance({
     employeeId,
     date,
@@ -89,9 +96,9 @@ async function calculateForEmployeeDay(
     },
     punches,
     correction,
+    holiday: holiday !== null,
   });
 
-  const dateValue = new Date(`${date}T00:00:00.000Z`);
   return {
     calculation,
     dateValue,

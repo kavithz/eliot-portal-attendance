@@ -15,6 +15,7 @@ describe("role permissions", () => {
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "attendance:manage"), true);
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "leave:manage"), true);
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "shift:manage"), true);
+    assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "holiday:manage"), true);
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "reports:read"), true);
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "leave:approve"), true);
     assert.equal(hasPermission(Role.HR_ADMINISTRATOR, "attendance:correction:approve"), true);
@@ -25,6 +26,7 @@ describe("role permissions", () => {
     assert.equal(hasPermission(Role.DEPARTMENT_MANAGER, "leave:approve"), true);
     assert.equal(hasPermission(Role.DEPARTMENT_MANAGER, "attendance:manage"), false);
     assert.equal(hasPermission(Role.DEPARTMENT_MANAGER, "employee:manage"), false);
+    assert.equal(hasPermission(Role.DEPARTMENT_MANAGER, "holiday:manage"), false);
   });
 
   it("limits Supervisor permissions to assigned employee work and request review", () => {

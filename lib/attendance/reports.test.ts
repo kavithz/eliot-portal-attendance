@@ -53,4 +53,16 @@ describe("employee-local monthly report windows", () => {
     assert.equal(report.summary.totalCalculatedDays, 4);
   });
 
+  it("includes date-only engine rows on the first day of a UTC+14 employee month", () => {
+    const report = buildEmployeeMonthlyReport(
+      { timeZone: "Pacific/Kiritimati" },
+      "2026-06",
+      [],
+      [{ date: "2026-06-01", status: "HOLIDAY" }],
+    );
+
+    assert.equal(report.summary.holidayDays, 1);
+    assert.equal(report.summary.totalCalculatedDays, 1);
+  });
+
 });

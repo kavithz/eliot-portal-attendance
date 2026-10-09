@@ -20,6 +20,7 @@ function statusPresentation(status: string | null) {
     case "EARLY_OUT": return { label: "Early Out", className: "bg-orange-50 text-orange-800" };
     case "MISSING_PUNCH": return { label: "Missing Punch", className: "bg-rose-50 text-rose-800" };
     case "WEEKEND": return { label: "Weekend", className: "bg-slate-100 text-slate-700" };
+    case "HOLIDAY": return { label: "Holiday", className: "bg-[var(--mint)] text-[var(--mint-ink)]" };
     case "UNDETERMINED": return { label: "Undetermined", className: "bg-slate-100 text-slate-700" };
     case null: return { label: "Not calculated", className: "bg-slate-100 text-slate-700" };
     default: return { label: status, className: "bg-slate-100 text-slate-700" };
@@ -159,6 +160,7 @@ export default async function DailyAttendancePage({
             <option value="EARLY_OUT">Early Out</option>
             <option value="MISSING_PUNCH">Missing Punch</option>
             <option value="WEEKEND">Weekend</option>
+            <option value="HOLIDAY">Holiday</option>
             <option value="UNDETERMINED">Undetermined</option>
           </select>
         </label>

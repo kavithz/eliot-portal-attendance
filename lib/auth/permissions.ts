@@ -21,6 +21,7 @@ export type Permission =
   | "wfh:submit"
   | "wfh:approve"
   | "shift:manage"
+  | "holiday:manage"
   | "reports:read"
   | "reports:department:read"
   | "payroll:export"
@@ -47,6 +48,7 @@ const rolePermissions: Record<Exclude<Role, "ADMIN">, readonly Permission[]> = {
     "leave:manage",
     "leave:approve",
     "shift:manage",
+    "holiday:manage",
     "reports:read",
     "payroll:export",
   ],

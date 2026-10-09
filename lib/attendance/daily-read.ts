@@ -10,6 +10,7 @@ export const calculatedAttendanceStatuses = [
   "EARLY_OUT",
   "MISSING_PUNCH",
   "WEEKEND",
+  "HOLIDAY",
   "UNDETERMINED",
 ] as const;
 

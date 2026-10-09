@@ -137,10 +137,17 @@ describe("calculated daily attendance read service", () => {
     assert.deepEqual(stub.calls, {});
   });
 
-  it("rejects invalid dates and statuses outside the implemented lifecycle", async () => {
+  it("accepts Holiday status and rejects invalid dates and unknown statuses", async () => {
     const stub = makeDatabase();
     await assert.rejects(listCalculatedDailyAttendance(admin, { date: "2026-02-30" }, stub.database));
-    await assert.rejects(listCalculatedDailyAttendance(admin, { status: "HOLIDAY" }, stub.database));
+    await listCalculatedDailyAttendance(admin, { status: "HOLIDAY" }, stub.database);
+    await assert.rejects(listCalculatedDailyAttendance(admin, { status: "FUTURE_STATUS" }, stub.database));
+    assert.deepEqual(stub.calls.count, { where: { status: "HOLIDAY" } });
+  });
+
+  it("rejects invalid dates before querying any data", async () => {
+    const stub = makeDatabase();
+    await assert.rejects(listCalculatedDailyAttendance(admin, { date: "2026-02-30" }, stub.database));
     assert.deepEqual(stub.calls, {});
   });
 });

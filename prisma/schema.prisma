@@ -317,6 +317,23 @@ model Shift {
   attendanceDaily AttendanceDaily[]
 }
 
+model Holiday {
+  id                       String      @id @default(cuid())
+  date                     DateTime    @db.Date
+  name                     String      @db.VarChar(120)
+  type                     HolidayType
+  branch                   String      @default("") @db.VarChar(120)
+  applicableEmployeeGroups String[]    @default([])
+  isPaid                   Boolean
+  overtimeEligible         Boolean
+  createdAt                DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime    @updatedAt @db.Timestamptz(3)
+
+  @@index([date])
+  @@index([type, date])
+  @@unique([date, name, branch])
+}
+
 model LeaveType {
   id              String             @id @default(cuid())
   name            String
@@ -508,6 +525,14 @@ enum ShiftWeekday {
   FRIDAY
   SATURDAY
   SUNDAY
+}
+
+enum HolidayType {
+  PUBLIC
+  POYA
+  COMPANY
+  SPECIAL
+  BRANCH_SPECIFIC
 }
 
 enum EmployeeDocumentType {
