@@ -39,6 +39,16 @@ export type MonthlyEmployeeReport = {
     approvedLeaveDays?: number | null;
     undeterminedDays?: number | null;
     totalCalculatedDays?: number;
+    pendingExpectedOvertimeHours?: number;
+    pendingOvertimeRequestCount?: number;
+    approvedExpectedOvertimeHours?: number;
+    approvedOvertimeRequestCount?: number;
+    rejectedExpectedOvertimeHours?: number;
+    rejectedOvertimeRequestCount?: number;
+    recordedActualOvertimeHours?: number | null;
+    recordedActualOvertimeEmployees?: number;
+    recordedActualOvertimeDays?: number;
+    conflictingActualOvertimeDays?: number;
   };
   days: MonthlyDaySummary[];
 };
@@ -51,7 +61,87 @@ export type MonthlyDailyStatus = {
   earlyMinutes?: number | null;
 };
 
-type EmployeeMonthlyReportDatabase = Pick<PrismaClient, "employee" | "workSession" | "attendanceDaily" | "attendanceRaw" | "holiday" | "leaveRequest">;
+export type MonthlyOvertimeSummary = {
+  pendingExpectedHours: number;
+  pendingRequestCount: number;
+  approvedExpectedHours: number;
+  approvedRequestCount: number;
+  rejectedExpectedHours: number;
+  rejectedRequestCount: number;
+  recordedActualHours: number | null;
+  recordedActualEmployees: number;
+  recordedActualDays: number;
+  conflictingActualDays: number;
+};
+
+type MonthlyOvertimeRequestInput = { date: string; status: string; expectedHours: number | string };
+type MonthlyActualOvertimeInput = { date: string; overtimeHours: number | string | null };
+
+export function buildMonthlyOvertimeSummary(
+  month: string,
+  requests: MonthlyOvertimeRequestInput[],
+  dailyRows: MonthlyActualOvertimeInput[],
+): MonthlyOvertimeSummary {
+  buildMonthWindow(month, "UTC");
+  const expectedHundredths = { PENDING: 0, APPROVED: 0, REJECTED: 0 };
+  const requestCounts = { PENDING: 0, APPROVED: 0, REJECTED: 0 };
+  for (const request of requests) {
+    if (request.date.slice(0, 7) !== month || !(request.status in expectedHundredths)) continue;
+    const amount = Number(request.expectedHours);
+    if (!Number.isFinite(amount) || amount < 0) continue;
+    const status = request.status as keyof typeof expectedHundredths;
+    expectedHundredths[status] += Math.round(amount * 100);
+    requestCounts[status] += 1;
+  }
+
+  const actualByDate = new Map<string, number | null>();
+  const conflictingDates = new Set<string>();
+  for (const row of dailyRows) {
+    if (row.date.slice(0, 7) !== month) continue;
+    const amount = row.overtimeHours === null ? null : Number(row.overtimeHours);
+    const value = amount !== null && Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : null;
+    if (!actualByDate.has(row.date)) actualByDate.set(row.date, value);
+    else if (actualByDate.get(row.date) !== value) {
+      actualByDate.set(row.date, null);
+      conflictingDates.add(row.date);
+    }
+  }
+
+  const actualValues = [...actualByDate.entries()].filter(([, value]) => value !== null);
+  const actualTotalHundredths = actualValues.reduce((total, [, value]) => total + (value ?? 0), 0);
+  return {
+    pendingExpectedHours: expectedHundredths.PENDING / 100,
+    pendingRequestCount: requestCounts.PENDING,
+    approvedExpectedHours: expectedHundredths.APPROVED / 100,
+    approvedRequestCount: requestCounts.APPROVED,
+    rejectedExpectedHours: expectedHundredths.REJECTED / 100,
+    rejectedRequestCount: requestCounts.REJECTED,
+    recordedActualHours: actualValues.length > 0 ? actualTotalHundredths / 100 : null,
+    recordedActualEmployees: actualValues.length > 0 ? 1 : 0,
+    recordedActualDays: actualValues.length,
+    conflictingActualDays: conflictingDates.size,
+  };
+}
+
+export function aggregateMonthlyOvertimeSummaries(summaries: Partial<MonthlyOvertimeSummary>[]): MonthlyOvertimeSummary {
+  const summariesWithActual = summaries.filter((summary) => summary.recordedActualHours !== null && summary.recordedActualHours !== undefined);
+  return {
+    pendingExpectedHours: summaries.reduce((total, summary) => total + (summary.pendingExpectedHours ?? 0), 0),
+    pendingRequestCount: summaries.reduce((total, summary) => total + (summary.pendingRequestCount ?? 0), 0),
+    approvedExpectedHours: summaries.reduce((total, summary) => total + (summary.approvedExpectedHours ?? 0), 0),
+    approvedRequestCount: summaries.reduce((total, summary) => total + (summary.approvedRequestCount ?? 0), 0),
+    rejectedExpectedHours: summaries.reduce((total, summary) => total + (summary.rejectedExpectedHours ?? 0), 0),
+    rejectedRequestCount: summaries.reduce((total, summary) => total + (summary.rejectedRequestCount ?? 0), 0),
+    recordedActualHours: summariesWithActual.length > 0
+      ? summariesWithActual.reduce((total, summary) => total + (summary.recordedActualHours ?? 0), 0)
+      : null,
+        recordedActualEmployees: summaries.reduce((total, summary) => total + (summary.recordedActualEmployees ?? (summary.recordedActualHours != null ? 1 : 0)), 0),
+    recordedActualDays: summaries.reduce((total, summary) => total + (summary.recordedActualDays ?? 0), 0),
+    conflictingActualDays: summaries.reduce((total, summary) => total + (summary.conflictingActualDays ?? 0), 0),
+  };
+}
+
+type EmployeeMonthlyReportDatabase = Pick<PrismaClient, "employee" | "workSession" | "attendanceDaily" | "attendanceRaw" | "holiday" | "leaveRequest" | "overtimeRequest">;
 
 function summarizeCalculatedDailyStatuses(dailySummaries: MonthlyDailyStatus[]) {
   type CalculatedStatus = "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "HOLIDAY" | "ABSENT" | "UNDETERMINED";
@@ -183,7 +273,7 @@ export function buildEmployeeMonthlyReport(
   month: string,
   sessions: MonthlySession[],
   dailySummaries: MonthlyDailyStatus[] = [],
-  monthlyTotals: { totalWorkingDays?: number | null; approvedLeaveDays?: number | null; holidayDays?: number | null } = {},
+  monthlyTotals: { totalWorkingDays?: number | null; approvedLeaveDays?: number | null; holidayDays?: number | null } & Partial<MonthlyOvertimeSummary> = {},
 ): MonthlyEmployeeReport {
   const window = buildMonthWindow(month, employee.timeZone);
   const filtered = sessions.filter((session) => {
@@ -234,6 +324,16 @@ export function buildEmployeeMonthlyReport(
       approvedLeaveDays: monthlyTotals.approvedLeaveDays ?? null,
       ...calculatedStatusSummary,
       ...(monthlyTotals.holidayDays !== undefined ? { holidayDays: monthlyTotals.holidayDays } : {}),
+      ...(monthlyTotals.pendingExpectedHours !== undefined ? { pendingExpectedOvertimeHours: monthlyTotals.pendingExpectedHours } : {}),
+      ...(monthlyTotals.pendingRequestCount !== undefined ? { pendingOvertimeRequestCount: monthlyTotals.pendingRequestCount } : {}),
+      ...(monthlyTotals.approvedExpectedHours !== undefined ? { approvedExpectedOvertimeHours: monthlyTotals.approvedExpectedHours } : {}),
+      ...(monthlyTotals.approvedRequestCount !== undefined ? { approvedOvertimeRequestCount: monthlyTotals.approvedRequestCount } : {}),
+      ...(monthlyTotals.rejectedExpectedHours !== undefined ? { rejectedExpectedOvertimeHours: monthlyTotals.rejectedExpectedHours } : {}),
+      ...(monthlyTotals.rejectedRequestCount !== undefined ? { rejectedOvertimeRequestCount: monthlyTotals.rejectedRequestCount } : {}),
+      ...(monthlyTotals.recordedActualHours !== undefined ? { recordedActualOvertimeHours: monthlyTotals.recordedActualHours } : {}),
+      ...(monthlyTotals.recordedActualEmployees !== undefined ? { recordedActualOvertimeEmployees: monthlyTotals.recordedActualEmployees } : {}),
+      ...(monthlyTotals.recordedActualDays !== undefined ? { recordedActualOvertimeDays: monthlyTotals.recordedActualDays } : {}),
+      ...(monthlyTotals.conflictingActualDays !== undefined ? { conflictingActualOvertimeDays: monthlyTotals.conflictingActualDays } : {}),
     },
     days,
   };
@@ -269,7 +369,7 @@ export async function getEmployeeMonthlyReport(
       },
     },
   });
-  const [sessions, dailyRows, rawPunches, holidays, approvedLeaves] = await Promise.all([
+  const [sessions, dailyRows, rawPunches, holidays, approvedLeaves, overtimeRequests] = await Promise.all([
     database.workSession.findMany({
       where: {
         record: { employeeId },
@@ -294,6 +394,7 @@ export async function getEmployeeMonthlyReport(
         workingHours: true,
         lateMinutes: true,
         earlyMinutes: true,
+        overtimeHours: true,
       },
       orderBy: [{ date: "asc" }, { id: "asc" }],
     }) : Promise.resolve([]),
@@ -318,6 +419,10 @@ export async function getEmployeeMonthlyReport(
         endDate: { gte: new Date(`${monthDateStart}T00:00:00.000Z`) },
       },
       select: { startDate: true, endDate: true },
+    }) : Promise.resolve([]),
+    employeeRecord ? database.overtimeRequest.findMany({
+      where: { employeeId: employeeRecord.id, date: { gte: dateStart, lt: dateEnd } },
+      select: { date: true, status: true, expectedHours: true },
     }) : Promise.resolve([]),
   ]);
 
@@ -385,6 +490,18 @@ export async function getEmployeeMonthlyReport(
   const approvedLeaveDays = workingDays.length > 0
     ? approvedLeaveRanges.reduce((sum, range) => sum + countScheduledWorkdays(range.startDate, range.endDate, workingDays, holidayDates), 0)
     : null;
+  const overtimeSummary = buildMonthlyOvertimeSummary(
+    month,
+    overtimeRequests.map((request) => ({
+      date: request.date.toISOString().slice(0, 10),
+      status: request.status,
+      expectedHours: request.expectedHours.toString(),
+    })),
+    dailyRows.map((row) => ({
+      date: row.date.toISOString().slice(0, 10),
+      overtimeHours: row.overtimeHours?.toString() ?? null,
+    })),
+  );
 
   return buildEmployeeMonthlyReport(
     employee,
@@ -400,6 +517,7 @@ export async function getEmployeeMonthlyReport(
       totalWorkingDays,
       approvedLeaveDays,
       holidayDays: holidayDates.size,
+      ...overtimeSummary,
     },
   );
 }
@@ -423,7 +541,29 @@ export async function getAdminMonthlyReport(month: string, employeeId?: string) 
     ? rowsWithEngineHours.reduce((sum, item) => sum + (item.report.summary.engineWorkedMs ?? 0), 0)
     : null;
   const engineCalculatedDays = rows.reduce((sum, item) => sum + (item.report.summary.engineCalculatedDays ?? 0), 0);
-  return { employees: rows, summary: { totalSessions, totalWorkedMs, engineWorkedMs, engineCalculatedDays, employeeCount: rows.length } };
+  const overtimeSummary = aggregateMonthlyOvertimeSummaries(rows.map(({ report }) => ({
+    pendingExpectedHours: report.summary.pendingExpectedOvertimeHours,
+    pendingRequestCount: report.summary.pendingOvertimeRequestCount,
+    approvedExpectedHours: report.summary.approvedExpectedOvertimeHours,
+    approvedRequestCount: report.summary.approvedOvertimeRequestCount,
+    rejectedExpectedHours: report.summary.rejectedExpectedOvertimeHours,
+    rejectedRequestCount: report.summary.rejectedOvertimeRequestCount,
+    recordedActualHours: report.summary.recordedActualOvertimeHours,
+    recordedActualEmployees: report.summary.recordedActualOvertimeEmployees,
+    recordedActualDays: report.summary.recordedActualOvertimeDays,
+    conflictingActualDays: report.summary.conflictingActualOvertimeDays,
+  })));
+  return {
+    employees: rows,
+    summary: {
+      totalSessions,
+      totalWorkedMs,
+      engineWorkedMs,
+      engineCalculatedDays,
+      employeeCount: rows.length,
+      ...overtimeSummary,
+    },
+  };
 }
 
 type MonthlySummaryActor = { id: string; role: Role };
@@ -483,7 +623,7 @@ export async function listMonthlySummaryEmployees(
       employee: {
         select: {
           employeeId: true,
-          department: { select: { name: true } },
+          department: { select: { id: true, name: true } },
         },
       },
     },
@@ -494,6 +634,7 @@ export async function listMonthlySummaryEmployees(
   return employees.map(({ employee: employeeRecord, ...employee }) => ({
     ...employee,
     employeeCode: employeeRecord?.employeeId ?? null,
+    departmentId: employeeRecord?.department?.id ?? null,
     departmentName: employeeRecord?.department?.name ?? null,
   }));
 }
@@ -525,6 +666,18 @@ export async function getMonthlyAttendanceSummaryReport(
       : null
   );
   const reportsWithEngineHours = rows.filter(({ report }) => report.summary.engineWorkedMs !== null && report.summary.engineWorkedMs !== undefined);
+  const overtimeSummary = aggregateMonthlyOvertimeSummaries(rows.map(({ report }) => ({
+    pendingExpectedHours: report.summary.pendingExpectedOvertimeHours,
+    pendingRequestCount: report.summary.pendingOvertimeRequestCount,
+    approvedExpectedHours: report.summary.approvedExpectedOvertimeHours,
+    approvedRequestCount: report.summary.approvedOvertimeRequestCount,
+    rejectedExpectedHours: report.summary.rejectedExpectedOvertimeHours,
+    rejectedRequestCount: report.summary.rejectedOvertimeRequestCount,
+    recordedActualHours: report.summary.recordedActualOvertimeHours,
+    recordedActualEmployees: report.summary.recordedActualOvertimeEmployees,
+    recordedActualDays: report.summary.recordedActualOvertimeDays,
+    conflictingActualDays: report.summary.conflictingActualOvertimeDays,
+  })));
 
   return {
     month,
@@ -549,6 +702,7 @@ export async function getMonthlyAttendanceSummaryReport(
       weekendDays: sumCalculatedStatuses((report) => report.summary.weekendDays),
       undeterminedDays: sumCalculatedStatuses((report) => report.summary.undeterminedDays),
       totalCalculatedDays: sum((report) => report.summary.totalCalculatedDays ?? 0),
+      ...overtimeSummary,
     },
   };
 }

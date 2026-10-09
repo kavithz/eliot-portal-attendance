@@ -18,6 +18,16 @@ export async function GET(request: NextRequest) {
       totalWorkedMs: report.summary.totalWorkedMs,
       engineWorkedMs: report.summary.engineWorkedMs,
       engineCalculatedDays: report.summary.engineCalculatedDays,
+      pendingExpectedHours: report.summary.pendingExpectedOvertimeHours,
+      pendingRequestCount: report.summary.pendingOvertimeRequestCount,
+      approvedExpectedHours: report.summary.approvedExpectedOvertimeHours,
+      approvedRequestCount: report.summary.approvedOvertimeRequestCount,
+      rejectedExpectedHours: report.summary.rejectedExpectedOvertimeHours,
+      rejectedRequestCount: report.summary.rejectedOvertimeRequestCount,
+      recordedActualHours: report.summary.recordedActualOvertimeHours,
+      recordedActualEmployees: report.summary.recordedActualOvertimeEmployees,
+      recordedActualDays: report.summary.recordedActualOvertimeDays,
+      conflictingActualDays: report.summary.conflictingActualOvertimeDays,
     },
   });
 

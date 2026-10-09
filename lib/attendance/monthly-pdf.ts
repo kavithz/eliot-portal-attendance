@@ -22,7 +22,28 @@ type PdfSummary = {
   totalWorkedMs: number;
   engineWorkedMs?: number | null;
   engineCalculatedDays?: number;
+  pendingExpectedHours?: number;
+  pendingRequestCount?: number;
+  approvedExpectedHours?: number;
+  approvedRequestCount?: number;
+  rejectedExpectedHours?: number;
+  rejectedRequestCount?: number;
+  recordedActualHours?: number | null;
+  recordedActualEmployees?: number;
+  recordedActualDays?: number;
+  conflictingActualDays?: number;
 };
+
+function overtimeSummaryText(summary: PdfSummary) {
+  const actual = summary.recordedActualHours === null || summary.recordedActualHours === undefined
+    ? "Not recorded"
+    : `${summary.recordedActualHours.toFixed(2)} h across ${summary.recordedActualDays ?? 0} employee-days${summary.recordedActualEmployees !== undefined ? ` from ${summary.recordedActualEmployees} employees` : ""}`;
+  const conflicts = summary.conflictingActualDays ? `; ${summary.conflictingActualDays} conflicting days excluded` : "";
+  const pending = `${(summary.pendingExpectedHours ?? 0).toFixed(2)} h (${summary.pendingRequestCount ?? 0} requests)`;
+  const approved = `${(summary.approvedExpectedHours ?? 0).toFixed(2)} h (${summary.approvedRequestCount ?? 0} requests)`;
+  const rejected = `${(summary.rejectedExpectedHours ?? 0).toFixed(2)} h (${summary.rejectedRequestCount ?? 0} requests)`;
+  return `OT request estimates: pending ${pending}; approved ${approved}; rejected ${rejected} | Recorded actual OT: ${actual}${conflicts}`;
+}
 
 function safeCell(value: string, width: number, fontSize = 8) {
   const supported = value.normalize("NFC").replace(/[^\x20-\x7e\xa0-\xff]/g, "?");
@@ -113,8 +134,8 @@ export async function createMonthlyAttendancePdf({
     ? "Engine hours: Not calculated"
     : `Engine hours: ${formatWorkedDuration(summary.engineWorkedMs)} (${summary.engineCalculatedDays ?? 0} calculated days)`;
   const summaryText = summary.employeeCount === undefined
-    ? `Sessions: ${summary.totalSessions} | Completed: ${employees[0]?.report.summary.completedSessions ?? 0} | Active: ${employees[0]?.report.summary.activeSessions ?? 0} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText}`
-    : `Employees: ${summary.employeeCount} | Sessions: ${summary.totalSessions} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText}`;
+    ? `Sessions: ${summary.totalSessions} | Completed: ${employees[0]?.report.summary.completedSessions ?? 0} | Active: ${employees[0]?.report.summary.activeSessions ?? 0} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText} | ${overtimeSummaryText(summary)}`
+    : `Employees: ${summary.employeeCount} | Sessions: ${summary.totalSessions} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText} | ${overtimeSummaryText(summary)}`;
   pdf.font("AppHelvetica-Bold").fontSize(9).fillColor("#111111").text(summaryText);
   pdf.moveDown(1);
 
@@ -129,7 +150,21 @@ export async function createMonthlyAttendancePdf({
       const engineWorked = employee.report.summary.engineWorkedMs === null || employee.report.summary.engineWorkedMs === undefined
         ? "Engine hours: Not calculated"
         : `Engine hours: ${formatWorkedDuration(employee.report.summary.engineWorkedMs)} (${employee.report.summary.engineCalculatedDays ?? 0} calculated days)`;
-      pdf.font("AppHelvetica").fontSize(8).fillColor("#111111").text(`Sessions: ${employee.report.summary.totalSessions} | Completed: ${employee.report.summary.completedSessions} | Active: ${employee.report.summary.activeSessions} | Session time: ${formatWorkedDuration(employee.report.summary.totalWorkedMs)} | ${engineWorked}`);
+      const employeeOvertimeSummary = overtimeSummaryText({
+        totalSessions: employee.report.summary.totalSessions,
+        totalWorkedMs: employee.report.summary.totalWorkedMs,
+        pendingExpectedHours: employee.report.summary.pendingExpectedOvertimeHours,
+        pendingRequestCount: employee.report.summary.pendingOvertimeRequestCount,
+        approvedExpectedHours: employee.report.summary.approvedExpectedOvertimeHours,
+        approvedRequestCount: employee.report.summary.approvedOvertimeRequestCount,
+        rejectedExpectedHours: employee.report.summary.rejectedExpectedOvertimeHours,
+        rejectedRequestCount: employee.report.summary.rejectedOvertimeRequestCount,
+        recordedActualHours: employee.report.summary.recordedActualOvertimeHours,
+        recordedActualEmployees: employee.report.summary.recordedActualOvertimeEmployees,
+        recordedActualDays: employee.report.summary.recordedActualOvertimeDays,
+        conflictingActualDays: employee.report.summary.conflictingActualOvertimeDays,
+      });
+      pdf.font("AppHelvetica").fontSize(8).fillColor("#111111").text(`Sessions: ${employee.report.summary.totalSessions} | Completed: ${employee.report.summary.completedSessions} | Active: ${employee.report.summary.activeSessions} | Session time: ${formatWorkedDuration(employee.report.summary.totalWorkedMs)} | ${engineWorked} | ${employeeOvertimeSummary}`);
       pdf.moveDown(0.5);
     }
 

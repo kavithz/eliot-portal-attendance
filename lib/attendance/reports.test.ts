@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildEmployeeMonthlyReport, buildMonthWindow, getEmployeeMonthlyReport, mergeMonthlyDateRanges } from "./reports";
+import { aggregateMonthlyOvertimeSummaries, buildEmployeeMonthlyReport, buildMonthWindow, buildMonthlyOvertimeSummary, getEmployeeMonthlyReport, mergeMonthlyDateRanges } from "./reports";
 
 describe("employee-local monthly report windows", () => {
   it("uses IANA local midnight for Sri Lanka and Bangladesh month boundaries", () => {
@@ -128,6 +128,69 @@ describe("employee-local monthly report windows", () => {
     assert.equal(report.summary.totalCalculatedDays, 0);
   });
 
+  it("keeps requested overtime by status separate from explicitly recorded actual overtime", () => {
+    const overtime = buildMonthlyOvertimeSummary("2024-02", [
+      { date: "2024-02-02", status: "PENDING", expectedHours: "1.25" },
+      { date: "2024-02-03", status: "APPROVED", expectedHours: "2.50" },
+      { date: "2024-02-04", status: "REJECTED", expectedHours: "0.50" },
+      { date: "2024-01-31", status: "APPROVED", expectedHours: "8.00" },
+    ], [
+      { date: "2024-02-02", overtimeHours: "1.25" },
+      { date: "2024-02-02", overtimeHours: "1.25" },
+      { date: "2024-02-29", overtimeHours: "2.00" },
+      { date: "2024-02-10", overtimeHours: null },
+    ]);
+
+    assert.equal(overtime.pendingExpectedHours, 1.25);
+    assert.equal(overtime.approvedExpectedHours, 2.5);
+    assert.equal(overtime.rejectedExpectedHours, 0.5);
+    assert.equal(overtime.recordedActualHours, 3.25);
+    assert.equal(overtime.recordedActualDays, 2);
+    assert.equal(overtime.conflictingActualDays, 0);
+  });
+
+  it("does not infer actual overtime from approved requests and excludes conflicting daily values", () => {
+    const overtime = buildMonthlyOvertimeSummary("2026-10", [
+      { date: "2026-10-01", status: "APPROVED", expectedHours: "4" },
+    ], [
+      { date: "2026-10-02", overtimeHours: "1.5" },
+      { date: "2026-10-02", overtimeHours: "2" },
+    ]);
+
+    assert.equal(overtime.approvedExpectedHours, 4);
+    assert.equal(overtime.recordedActualHours, null);
+    assert.equal(overtime.recordedActualDays, 0);
+    assert.equal(overtime.conflictingActualDays, 1);
+  });
+
+  it("reports zero actual overtime only when a daily row explicitly stores zero", () => {
+    const absent = buildMonthlyOvertimeSummary("2026-10", [], []);
+    const recordedZero = buildMonthlyOvertimeSummary("2026-10", [], [
+      { date: "2026-10-02", overtimeHours: "0" },
+    ]);
+
+    assert.equal(absent.recordedActualHours, null);
+    assert.equal(absent.recordedActualDays, 0);
+    assert.equal(recordedZero.recordedActualHours, 0);
+    assert.equal(recordedZero.recordedActualDays, 1);
+  });
+
+  it("aggregates OT by employees while preserving actual-hour coverage and conflict counts", () => {
+    const overtime = aggregateMonthlyOvertimeSummaries([
+      { pendingExpectedHours: 1, pendingRequestCount: 1, approvedExpectedHours: 2, approvedRequestCount: 1, rejectedExpectedHours: 0, rejectedRequestCount: 0, recordedActualHours: 3, recordedActualDays: 2, conflictingActualDays: 0 },
+      { pendingExpectedHours: 0, pendingRequestCount: 0, approvedExpectedHours: 4, approvedRequestCount: 2, rejectedExpectedHours: 1, rejectedRequestCount: 1, recordedActualHours: null, recordedActualDays: 0, conflictingActualDays: 1 },
+    ]);
+
+    assert.equal(overtime.pendingExpectedHours, 1);
+    assert.equal(overtime.approvedExpectedHours, 6);
+    assert.equal(overtime.approvedRequestCount, 3);
+    assert.equal(overtime.rejectedExpectedHours, 1);
+    assert.equal(overtime.recordedActualHours, 3);
+    assert.equal(overtime.recordedActualEmployees, 1);
+    assert.equal(overtime.recordedActualDays, 2);
+    assert.equal(overtime.conflictingActualDays, 1);
+  });
+
   it("uses linked Employee records, shift weekdays, holidays, leave, and saved corrections", async () => {
     const calls: Record<string, unknown> = {};
     const database = {
@@ -167,6 +230,7 @@ describe("employee-local monthly report windows", () => {
             workingHours: 7.5,
             lateMinutes: 5,
             earlyMinutes: 0,
+            overtimeHours: "1.5",
           }];
         },
       },
@@ -193,6 +257,16 @@ describe("employee-local monthly report windows", () => {
           ];
         },
       },
+      overtimeRequest: {
+        findMany: async ({ where }: { where: { employeeId: string; date: unknown } }) => {
+          calls.overtimeWhere = where;
+          return [
+            { date: new Date("2026-06-01T00:00:00.000Z"), status: "APPROVED", expectedHours: "2.25" },
+            { date: new Date("2026-06-02T00:00:00.000Z"), status: "PENDING", expectedHours: "0.5" },
+            { date: new Date("2026-06-04T00:00:00.000Z"), status: "REJECTED", expectedHours: "0.75" },
+          ];
+        },
+      },
     } as never;
 
     const report = await getEmployeeMonthlyReport({
@@ -206,6 +280,7 @@ describe("employee-local monthly report windows", () => {
     assert.deepEqual(calls.dailyWhere, { employeeId: "employee-record-1", date: { gte: new Date("2026-06-01T00:00:00.000Z"), lt: new Date("2026-07-01T00:00:00.000Z") } });
     assert.deepEqual(calls.rawWhere, { employeeId: "employee-record-1", timestamp: { gte: new Date("2026-05-31T18:30:00.000Z"), lte: new Date("2026-06-30T18:29:59.999Z") } });
     assert.equal((calls.leaveWhere as { status: string }).status, "APPROVED");
+    assert.deepEqual(calls.overtimeWhere, { employeeId: "employee-record-1", date: { gte: new Date("2026-06-01T00:00:00.000Z"), lt: new Date("2026-07-01T00:00:00.000Z") } });
     assert.equal(report.summary.totalWorkingDays, 21);
     assert.equal(report.summary.approvedLeaveDays, 2);
     assert.equal(report.summary.holidayDays, 1);
@@ -215,6 +290,11 @@ describe("employee-local monthly report windows", () => {
     assert.equal(report.summary.undeterminedDays, 0);
     assert.equal(report.summary.engineWorkedMs, (7.5 + 8.75) * 3_600_000);
     assert.equal(report.summary.engineCalculatedDays, 4);
+    assert.equal(report.summary.recordedActualOvertimeHours, 1.5);
+    assert.equal(report.summary.recordedActualOvertimeDays, 1);
+    assert.equal(report.summary.approvedExpectedOvertimeHours, 2.25);
+    assert.equal(report.summary.pendingExpectedOvertimeHours, 0.5);
+    assert.equal(report.summary.rejectedExpectedOvertimeHours, 0.75);
   });
 
 });

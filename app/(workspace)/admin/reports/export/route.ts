@@ -12,7 +12,15 @@ export async function GET(request: NextRequest) {
     month,
     title: "Company attendance",
     employees: employees.map(({ employee, report }) => ({ ...employee, report })),
-    summary,
+    summary: {
+      ...summary,
+      pendingExpectedHours: summary.pendingExpectedHours,
+      approvedExpectedHours: summary.approvedExpectedHours,
+      rejectedExpectedHours: summary.rejectedExpectedHours,
+      recordedActualHours: summary.recordedActualHours,
+      recordedActualDays: summary.recordedActualDays,
+      conflictingActualDays: summary.conflictingActualDays,
+    },
   });
 
   return new NextResponse(new Uint8Array(pdf), {
