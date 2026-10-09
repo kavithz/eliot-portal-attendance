@@ -1,5 +1,9 @@
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { hasPermission } from "@/lib/auth/permissions";
+import { AttendanceEngineConfigurationError, calculateDailyAttendance } from "@/lib/attendance/engine";
+import { countScheduledWorkdays } from "@/lib/leave/workdays";
 import { prisma } from "@/lib/prisma";
+import type { Prisma, PrismaClient, Role } from "@prisma/client";
 
 export type MonthlySession = {
   id: string;
@@ -22,13 +26,18 @@ export type MonthlyEmployeeReport = {
     completedSessions: number;
     activeSessions: number;
     totalWorkedMs: number;
-    presentDays?: number;
-    lateDays?: number;
-    earlyOutDays?: number;
-    missingPunchDays?: number;
-    weekendDays?: number;
-    holidayDays?: number;
-    undeterminedDays?: number;
+    engineWorkedMs?: number | null;
+    engineCalculatedDays?: number;
+    totalWorkingDays?: number | null;
+    presentDays?: number | null;
+    absentDays?: number | null;
+    lateDays?: number | null;
+    earlyOutDays?: number | null;
+    missingPunchDays?: number | null;
+    weekendDays?: number | null;
+    holidayDays?: number | null;
+    approvedLeaveDays?: number | null;
+    undeterminedDays?: number | null;
     totalCalculatedDays?: number;
   };
   days: MonthlyDaySummary[];
@@ -36,13 +45,26 @@ export type MonthlyEmployeeReport = {
 
 export type MonthlyDailyStatus = {
   date: string;
-  status?: "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "UNDETERMINED" | string | null;
+  status?: "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "HOLIDAY" | "ABSENT" | "UNDETERMINED" | string | null;
   workingHours?: number | null;
   lateMinutes?: number | null;
   earlyMinutes?: number | null;
 };
 
+type EmployeeMonthlyReportDatabase = Pick<PrismaClient, "employee" | "workSession" | "attendanceDaily" | "attendanceRaw" | "holiday" | "leaveRequest">;
+
 function summarizeCalculatedDailyStatuses(dailySummaries: MonthlyDailyStatus[]) {
+  type CalculatedStatus = "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "HOLIDAY" | "ABSENT" | "UNDETERMINED";
+  const statuses = new Set<CalculatedStatus>([
+    "PRESENT",
+    "LATE",
+    "EARLY_OUT",
+    "MISSING_PUNCH",
+    "WEEKEND",
+    "HOLIDAY",
+    "ABSENT",
+    "UNDETERMINED",
+  ]);
   const counts = {
     PRESENT: 0,
     LATE: 0,
@@ -50,24 +72,53 @@ function summarizeCalculatedDailyStatuses(dailySummaries: MonthlyDailyStatus[]) 
     MISSING_PUNCH: 0,
     WEEKEND: 0,
     HOLIDAY: 0,
+    ABSENT: 0,
     UNDETERMINED: 0,
-  } as Record<Exclude<MonthlyDailyStatus["status"], null | undefined>, number>;
+  } satisfies Record<CalculatedStatus, number>;
+  const statusByDate = new Map<string, CalculatedStatus>();
 
   for (const item of dailySummaries) {
-    if (!item.status || !(item.status in counts)) continue;
-    counts[item.status as keyof typeof counts] += 1;
+    if (!item.status || !statuses.has(item.status as CalculatedStatus)) continue;
+    const status = item.status as CalculatedStatus;
+    const previous = statusByDate.get(item.date);
+    statusByDate.set(item.date, previous && previous !== status ? "UNDETERMINED" : status);
   }
 
+  for (const status of statusByDate.values()) counts[status] += 1;
+
   return {
-    presentDays: counts.PRESENT,
-    lateDays: counts.LATE,
-    earlyOutDays: counts.EARLY_OUT,
-    missingPunchDays: counts.MISSING_PUNCH,
-    weekendDays: counts.WEEKEND,
+    presentDays: statusByDate.size > 0 ? counts.PRESENT : null,
+    absentDays: counts.ABSENT > 0 ? counts.ABSENT : null,
+    lateDays: statusByDate.size > 0 ? counts.LATE : null,
+    earlyOutDays: statusByDate.size > 0 ? counts.EARLY_OUT : null,
+    missingPunchDays: statusByDate.size > 0 ? counts.MISSING_PUNCH : null,
+    weekendDays: statusByDate.size > 0 ? counts.WEEKEND : null,
     holidayDays: counts.HOLIDAY,
-    undeterminedDays: counts.UNDETERMINED,
-    totalCalculatedDays: dailySummaries.filter((item) => item.status && item.status in counts).length,
+    undeterminedDays: statusByDate.size > 0 ? counts.UNDETERMINED : null,
+    totalCalculatedDays: statusByDate.size,
   };
+}
+
+function summarizeEngineWorkedTime(dailySummaries: MonthlyDailyStatus[]) {
+  const hoursByDate = new Map<string, number | null>();
+  for (const item of dailySummaries) {
+    const hours = item.workingHours;
+    const value = hours !== null && hours !== undefined && Number.isFinite(hours) && hours >= 0 ? hours : null;
+    if (!hoursByDate.has(item.date)) {
+      hoursByDate.set(item.date, value);
+    } else if (hoursByDate.get(item.date) !== value) {
+      hoursByDate.set(item.date, null);
+    }
+  }
+
+  let engineWorkedMs = 0;
+  let engineCalculatedDays = 0;
+  for (const hours of hoursByDate.values()) {
+    if (hours === null) continue;
+    engineWorkedMs += Math.round(hours * 3_600_000);
+    engineCalculatedDays += 1;
+  }
+  return { engineWorkedMs: engineCalculatedDays > 0 ? engineWorkedMs : null, engineCalculatedDays };
 }
 
 export function buildMonthWindow(month: string, timeZone: string) {
@@ -96,11 +147,43 @@ function buildMonthDateWindow(month: string) {
   };
 }
 
+export type MonthlyDateRange = { startDate: string; endDate: string };
+
+export function mergeMonthlyDateRanges(ranges: MonthlyDateRange[], monthStart: string, monthEnd: string) {
+  const clipped = ranges
+    .map(({ startDate, endDate }) => ({
+      startDate: startDate > monthStart ? startDate : monthStart,
+      endDate: endDate < monthEnd ? endDate : monthEnd,
+    }))
+    .filter(({ startDate, endDate }) => startDate <= endDate)
+    .sort((left, right) => left.startDate.localeCompare(right.startDate) || left.endDate.localeCompare(right.endDate));
+  const merged: MonthlyDateRange[] = [];
+
+  for (const range of clipped) {
+    const previous = merged.at(-1);
+    if (previous && range.startDate <= previous.endDate) {
+      if (range.endDate > previous.endDate) previous.endDate = range.endDate;
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+function monthlyDateLabels(month: string) {
+  const { start, end } = buildMonthDateWindow(month);
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: new Date(end.getTime() - 86_400_000).toISOString().slice(0, 10),
+  };
+}
+
 export function buildEmployeeMonthlyReport(
   employee: { timeZone: string },
   month: string,
   sessions: MonthlySession[],
   dailySummaries: MonthlyDailyStatus[] = [],
+  monthlyTotals: { totalWorkingDays?: number | null; approvedLeaveDays?: number | null; holidayDays?: number | null } = {},
 ): MonthlyEmployeeReport {
   const window = buildMonthWindow(month, employee.timeZone);
   const filtered = sessions.filter((session) => {
@@ -109,6 +192,9 @@ export function buildEmployeeMonthlyReport(
   });
 
   const calculatedStatusSummary = summarizeCalculatedDailyStatuses(
+    dailySummaries.filter((day) => day.date.slice(0, 7) === month),
+  );
+  const engineWorkedTime = summarizeEngineWorkedTime(
     dailySummaries.filter((day) => day.date.slice(0, 7) === month),
   );
 
@@ -143,17 +229,48 @@ export function buildEmployeeMonthlyReport(
       completedSessions,
       activeSessions,
       totalWorkedMs,
+      ...engineWorkedTime,
+      totalWorkingDays: monthlyTotals.totalWorkingDays ?? null,
+      approvedLeaveDays: monthlyTotals.approvedLeaveDays ?? null,
       ...calculatedStatusSummary,
+      ...(monthlyTotals.holidayDays !== undefined ? { holidayDays: monthlyTotals.holidayDays } : {}),
     },
     days,
   };
 }
 
-export async function getEmployeeMonthlyReport(employeeId: string, month: string, employee: { id: string; timeZone: string; name: string; email: string }) {
+export async function getEmployeeMonthlyReport(
+  employee: { id: string; timeZone: string; name: string },
+  month: string,
+  database: EmployeeMonthlyReportDatabase = prisma,
+) {
+  const employeeId = employee.id;
   const { start: monthStart, end: monthEnd } = buildMonthWindow(month, employee.timeZone);
   const { start: dateStart, end: dateEnd } = buildMonthDateWindow(month);
-  const [sessions, dailySummaries] = await Promise.all([
-    prisma.workSession.findMany({
+  const { start: monthDateStart, end: monthDateEnd } = monthlyDateLabels(month);
+  const employeeRecord = await database.employee.findUnique({
+    where: { userId: employeeId },
+    select: {
+      id: true,
+      shift: {
+        select: {
+          id: true,
+          startTime: true,
+          endTime: true,
+          gracePeriodMinutes: true,
+          lateThresholdMinutes: true,
+          earlyDepartureThresholdMinutes: true,
+          breakDurationMinutes: true,
+          minimumWorkingHours: true,
+          overtimeEligible: true,
+          roundingRules: true,
+          workingDays: true,
+        },
+      },
+    },
+  });
+  const [sessions, dailyRows, rawPunches, holidays, approvedLeaves] = await Promise.all([
+    database.workSession.findMany({
       where: {
         record: { employeeId },
         startAt: { gte: monthStart, lte: monthEnd },
@@ -166,9 +283,9 @@ export async function getEmployeeMonthlyReport(employeeId: string, month: string
         endAt: true,
       },
     }),
-    prisma.attendanceDaily.findMany({
+    employeeRecord ? database.attendanceDaily.findMany({
       where: {
-        employeeId,
+        employeeId: employeeRecord.id,
         date: { gte: dateStart, lt: dateEnd },
       },
       select: {
@@ -178,9 +295,96 @@ export async function getEmployeeMonthlyReport(employeeId: string, month: string
         lateMinutes: true,
         earlyMinutes: true,
       },
-      orderBy: { date: "asc" },
+      orderBy: [{ date: "asc" }, { id: "asc" }],
+    }) : Promise.resolve([]),
+    employeeRecord ? database.attendanceRaw.findMany({
+      where: { employeeId: employeeRecord.id, timestamp: { gte: monthStart, lte: monthEnd } },
+      select: { id: true, timestamp: true, punchType: true },
+      orderBy: [{ timestamp: "asc" }, { id: "asc" }],
+    }) : Promise.resolve([]),
+    database.holiday.findMany({
+      where: {
+        date: { gte: dateStart, lt: dateEnd },
+        branch: "",
+        applicableEmployeeGroups: { isEmpty: true },
+      },
+      select: { date: true },
     }),
+    employeeRecord ? database.leaveRequest.findMany({
+      where: {
+        employeeId: employeeRecord.id,
+        status: "APPROVED",
+        startDate: { lte: new Date(`${monthDateEnd}T00:00:00.000Z`) },
+        endDate: { gte: new Date(`${monthDateStart}T00:00:00.000Z`) },
+      },
+      select: { startDate: true, endDate: true },
+    }) : Promise.resolve([]),
   ]);
+
+  const holidayDates = new Set(holidays.map(({ date }) => date.toISOString().slice(0, 10)));
+  const dailySummaries: MonthlyDailyStatus[] = dailyRows.map((row) => ({
+    date: row.date.toISOString().slice(0, 10),
+    status: row.status ?? undefined,
+    workingHours: row.workingHours !== null && row.workingHours !== undefined ? Number(row.workingHours) : null,
+    lateMinutes: row.lateMinutes,
+    earlyMinutes: row.earlyMinutes,
+  }));
+  const persistedDates = new Set(dailySummaries.map(({ date }) => date));
+  const punchesByDate = new Map<string, typeof rawPunches>();
+  for (const punch of rawPunches) {
+    const date = formatInTimeZone(punch.timestamp, employee.timeZone, "yyyy-MM-dd");
+    const dayPunches = punchesByDate.get(date) ?? [];
+    dayPunches.push(punch);
+    punchesByDate.set(date, dayPunches);
+  }
+  const shift = employeeRecord?.shift;
+  if (shift) {
+    const weekdayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"] as const;
+    for (let timestamp = dateStart.getTime(); timestamp < dateEnd.getTime(); timestamp += 86_400_000) {
+      const date = new Date(timestamp).toISOString().slice(0, 10);
+      if (persistedDates.has(date)) continue;
+      const weekday = weekdayNames[new Date(timestamp).getUTCDay()];
+      const dayPunches = punchesByDate.get(date) ?? [];
+      const isHoliday = holidayDates.has(date);
+      const isConfiguredWeekend = shift.workingDays.length > 0 && !shift.workingDays.includes(weekday);
+      if (dayPunches.length === 0 && !isHoliday && !isConfiguredWeekend) continue;
+
+      try {
+        const calculation = calculateDailyAttendance({
+          employeeId: employeeRecord.id,
+          date,
+          timeZone: employee.timeZone,
+          shift: {
+            ...shift,
+            minimumWorkingHours: shift.minimumWorkingHours?.toString() ?? null,
+          },
+          punches: dayPunches,
+          holiday: isHoliday,
+        });
+        dailySummaries.push({
+          date,
+          status: calculation.status,
+          workingHours: dayPunches.length > 0 ? calculation.workingHours : null,
+          lateMinutes: calculation.lateMinutes,
+          earlyMinutes: calculation.earlyMinutes,
+        });
+      } catch (error) {
+        if (!(error instanceof AttendanceEngineConfigurationError)) throw error;
+        dailySummaries.push({ date, status: "UNDETERMINED", workingHours: null, lateMinutes: null, earlyMinutes: null });
+      }
+    }
+  }
+  const workingDays = employeeRecord?.shift?.workingDays ?? [];
+  const totalWorkingDays = workingDays.length > 0
+    ? countScheduledWorkdays(monthDateStart, monthDateEnd, workingDays, holidayDates)
+    : null;
+  const approvedLeaveRanges = mergeMonthlyDateRanges(approvedLeaves.map(({ startDate, endDate }) => ({
+    startDate: startDate.toISOString().slice(0, 10),
+    endDate: endDate.toISOString().slice(0, 10),
+  })), monthDateStart, monthDateEnd);
+  const approvedLeaveDays = workingDays.length > 0
+    ? approvedLeaveRanges.reduce((sum, range) => sum + countScheduledWorkdays(range.startDate, range.endDate, workingDays, holidayDates), 0)
+    : null;
 
   return buildEmployeeMonthlyReport(
     employee,
@@ -191,13 +395,12 @@ export async function getEmployeeMonthlyReport(employeeId: string, month: string
       startAt: session.startAt,
       endAt: session.endAt,
     })),
-    dailySummaries.map((row) => ({
-      date: row.date.toISOString().slice(0, 10),
-      status: row.status ?? undefined,
-      workingHours: row.workingHours !== null && row.workingHours !== undefined ? Number(row.workingHours) : null,
-      lateMinutes: row.lateMinutes,
-      earlyMinutes: row.earlyMinutes,
-    })),
+    dailySummaries,
+    {
+      totalWorkingDays,
+      approvedLeaveDays,
+      holidayDays: holidayDates.size,
+    },
   );
 }
 
@@ -208,58 +411,145 @@ export async function getAdminMonthlyReport(month: string, employeeId?: string) 
     orderBy: { name: "asc" },
   });
 
-  const rows = [] as Array<{ employee: { id: string; name: string; email: string; timeZone: string }; report: MonthlyEmployeeReport }>;
-  for (const employee of employees) {
-    const { start: monthStart, end: monthEnd } = buildMonthWindow(month, employee.timeZone);
-    const { start: dateStart, end: dateEnd } = buildMonthDateWindow(month);
-    const [sessions, dailySummaries] = await Promise.all([
-      prisma.workSession.findMany({
-        where: {
-          record: { employeeId: employee.id },
-          startAt: { gte: monthStart, lte: monthEnd },
-        },
-        orderBy: { startAt: "asc" },
-        select: { id: true, mode: true, startAt: true, endAt: true },
-      }),
-      prisma.attendanceDaily.findMany({
-        where: {
-          employeeId: employee.id,
-          date: { gte: dateStart, lt: dateEnd },
-        },
-        select: {
-          date: true,
-          status: true,
-          workingHours: true,
-          lateMinutes: true,
-          earlyMinutes: true,
-        },
-        orderBy: { date: "asc" },
-      }),
-    ]);
-    rows.push({
-      employee,
-      report: buildEmployeeMonthlyReport(
-        employee,
-        month,
-        sessions.map((session) => ({
-          id: session.id,
-          mode: session.mode,
-          startAt: session.startAt,
-          endAt: session.endAt,
-        })),
-        dailySummaries.map((row) => ({
-          date: row.date.toISOString().slice(0, 10),
-          status: row.status ?? undefined,
-          workingHours: row.workingHours !== null && row.workingHours !== undefined ? Number(row.workingHours) : null,
-          lateMinutes: row.lateMinutes,
-          earlyMinutes: row.earlyMinutes,
-        })),
-      ),
-    });
-  }
+  const rows = await Promise.all(employees.map(async (employee) => ({
+    employee,
+    report: await getEmployeeMonthlyReport(employee, month),
+  })));
 
   const totalSessions = rows.reduce((sum, item) => sum + item.report.summary.totalSessions, 0);
   const totalWorkedMs = rows.reduce((sum, item) => sum + item.report.summary.totalWorkedMs, 0);
-  return { employees: rows, summary: { totalSessions, totalWorkedMs, employeeCount: rows.length } };
+  const rowsWithEngineHours = rows.filter(({ report }) => report.summary.engineWorkedMs !== null && report.summary.engineWorkedMs !== undefined);
+  const engineWorkedMs = rowsWithEngineHours.length > 0
+    ? rowsWithEngineHours.reduce((sum, item) => sum + (item.report.summary.engineWorkedMs ?? 0), 0)
+    : null;
+  const engineCalculatedDays = rows.reduce((sum, item) => sum + (item.report.summary.engineCalculatedDays ?? 0), 0);
+  return { employees: rows, summary: { totalSessions, totalWorkedMs, engineWorkedMs, engineCalculatedDays, employeeCount: rows.length } };
+}
+
+type MonthlySummaryActor = { id: string; role: Role };
+type MonthlySummaryScopeDatabase = Pick<PrismaClient, "user" | "employee">;
+
+export class MonthlySummaryAccessError extends Error {
+  constructor() {
+    super("You do not have access to this monthly attendance summary.");
+    this.name = "MonthlySummaryAccessError";
+  }
+}
+
+export async function listMonthlySummaryEmployees(
+  actor: MonthlySummaryActor,
+  month: string,
+  selectedEmployeeId = "",
+  database: MonthlySummaryScopeDatabase = prisma,
+) {
+  buildMonthWindow(month, "UTC");
+  const selectedId = selectedEmployeeId.trim();
+  if (selectedId.length > 100) throw new RangeError("Employee selection is invalid.");
+
+  const canReadOrganization = hasPermission(actor.role, "reports:read");
+  const canReadDepartment = hasPermission(actor.role, "reports:department:read");
+  if (!canReadOrganization && !canReadDepartment) throw new MonthlySummaryAccessError();
+
+  let departmentUserIds: string[] | null = null;
+  if (!canReadOrganization) {
+    const manager = await database.employee.findUnique({
+      where: { userId: actor.id },
+      select: { departmentId: true },
+    });
+    if (!manager?.departmentId) {
+      if (selectedId) throw new MonthlySummaryAccessError();
+      return [];
+    }
+    const departmentEmployees = await database.employee.findMany({
+      where: { departmentId: manager.departmentId },
+      select: { userId: true },
+    });
+    departmentUserIds = [...new Set(departmentEmployees.flatMap(({ userId }) => userId ? [userId] : []))];
+    if (selectedId && !departmentUserIds.includes(selectedId)) throw new MonthlySummaryAccessError();
+  }
+
+  const where: Prisma.UserWhereInput = {
+    role: "EMPLOYEE",
+    ...(departmentUserIds !== null
+      ? { id: { in: selectedId ? [selectedId] : departmentUserIds } }
+      : selectedId ? { id: selectedId } : {}),
+  };
+  const employees = await database.user.findMany({
+    where,
+    select: {
+      id: true,
+      name: true,
+      timeZone: true,
+      employee: {
+        select: {
+          employeeId: true,
+          department: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+  if (selectedId && employees.length === 0) throw new MonthlySummaryAccessError();
+
+  return employees.map(({ employee: employeeRecord, ...employee }) => ({
+    ...employee,
+    employeeCode: employeeRecord?.employeeId ?? null,
+    departmentName: employeeRecord?.department?.name ?? null,
+  }));
+}
+
+export async function getMonthlyAttendanceSummaryReport(
+  actor: MonthlySummaryActor,
+  month: string,
+  selectedEmployeeId = "",
+  database: MonthlySummaryScopeDatabase = prisma,
+) {
+  const availableEmployees = await listMonthlySummaryEmployees(actor, month, "", database);
+  const selectedId = selectedEmployeeId.trim();
+  if (selectedId && !availableEmployees.some(({ id }) => id === selectedId)) throw new MonthlySummaryAccessError();
+  const employees = selectedId ? availableEmployees.filter(({ id }) => id === selectedId) : availableEmployees;
+  const rows = await Promise.all(employees.map(async (employee) => ({
+    employee,
+    report: await getEmployeeMonthlyReport(employee, month),
+  })));
+  const sum = (select: (report: MonthlyEmployeeReport) => number) => rows.reduce((total, row) => total + select(row.report), 0);
+  const rowsWithCalculatedStatuses = rows.filter(({ report }) => (report.summary.totalCalculatedDays ?? 0) > 0);
+  const sumCalculatedStatuses = (select: (report: MonthlyEmployeeReport) => number | null | undefined) => (
+    rowsWithCalculatedStatuses.length > 0
+      ? rowsWithCalculatedStatuses.reduce((total, row) => total + (select(row.report) ?? 0), 0)
+      : null
+  );
+  const sumWhenComplete = (select: (report: MonthlyEmployeeReport) => number | null) => (
+    rows.length > 0 && rows.every((row) => select(row.report) !== null)
+      ? rows.reduce((total, row) => total + (select(row.report) ?? 0), 0)
+      : null
+  );
+  const reportsWithEngineHours = rows.filter(({ report }) => report.summary.engineWorkedMs !== null && report.summary.engineWorkedMs !== undefined);
+
+  return {
+    month,
+    employees: rows,
+    availableEmployees,
+    summary: {
+      employeeCount: rows.length,
+      totalSessions: sum((report) => report.summary.totalSessions),
+      totalWorkedMs: sum((report) => report.summary.totalWorkedMs),
+      engineWorkedMs: reportsWithEngineHours.length > 0
+        ? reportsWithEngineHours.reduce((total, { report }) => total + (report.summary.engineWorkedMs ?? 0), 0)
+        : null,
+      engineCalculatedDays: sum((report) => report.summary.engineCalculatedDays ?? 0),
+      totalWorkingDays: sumWhenComplete((report) => report.summary.totalWorkingDays ?? null),
+      presentDays: sumCalculatedStatuses((report) => report.summary.presentDays),
+      absentDays: sumWhenComplete((report) => report.summary.absentDays ?? null),
+      lateDays: sumCalculatedStatuses((report) => report.summary.lateDays),
+      earlyOutDays: sumCalculatedStatuses((report) => report.summary.earlyOutDays),
+      approvedLeaveDays: sumWhenComplete((report) => report.summary.approvedLeaveDays ?? null),
+      holidayDays: sum((report) => report.summary.holidayDays ?? 0),
+      missingPunchDays: sumCalculatedStatuses((report) => report.summary.missingPunchDays),
+      weekendDays: sumCalculatedStatuses((report) => report.summary.weekendDays),
+      undeterminedDays: sumCalculatedStatuses((report) => report.summary.undeterminedDays),
+      totalCalculatedDays: sum((report) => report.summary.totalCalculatedDays ?? 0),
+    },
+  };
 }
 

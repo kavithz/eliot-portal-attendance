@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   const user = await requirePageUser();
   const month = request.nextUrl.searchParams.get("month") ?? formatInTimeZone(new Date(), user.timeZone, "yyyy-MM");
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return new NextResponse("Invalid report month.", { status: 400 });
-  const report = await getEmployeeMonthlyReport(user.id, month, user);
+  const report = await getEmployeeMonthlyReport(user, month);
   const pdf = await createMonthlyAttendancePdf({
     month,
     title: "Employee attendance",
@@ -16,6 +16,8 @@ export async function GET(request: NextRequest) {
     summary: {
       totalSessions: report.summary.totalSessions,
       totalWorkedMs: report.summary.totalWorkedMs,
+      engineWorkedMs: report.summary.engineWorkedMs,
+      engineCalculatedDays: report.summary.engineCalculatedDays,
     },
   });
 

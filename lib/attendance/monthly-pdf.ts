@@ -20,6 +20,8 @@ type PdfSummary = {
   employeeCount?: number;
   totalSessions: number;
   totalWorkedMs: number;
+  engineWorkedMs?: number | null;
+  engineCalculatedDays?: number;
 };
 
 function safeCell(value: string, width: number, fontSize = 8) {
@@ -107,9 +109,12 @@ export async function createMonthlyAttendancePdf({
     pdf.font("AppHelvetica-Bold").fontSize(11).text("Company attendance summary");
   }
   pdf.moveDown(0.6);
+  const engineWorkedText = summary.engineWorkedMs === null || summary.engineWorkedMs === undefined
+    ? "Engine hours: Not calculated"
+    : `Engine hours: ${formatWorkedDuration(summary.engineWorkedMs)} (${summary.engineCalculatedDays ?? 0} calculated days)`;
   const summaryText = summary.employeeCount === undefined
-    ? `Sessions: ${summary.totalSessions} | Completed: ${employees[0]?.report.summary.completedSessions ?? 0} | Active: ${employees[0]?.report.summary.activeSessions ?? 0} | Worked: ${formatWorkedDuration(summary.totalWorkedMs)}`
-    : `Employees: ${summary.employeeCount} | Sessions: ${summary.totalSessions} | Worked: ${formatWorkedDuration(summary.totalWorkedMs)}`;
+    ? `Sessions: ${summary.totalSessions} | Completed: ${employees[0]?.report.summary.completedSessions ?? 0} | Active: ${employees[0]?.report.summary.activeSessions ?? 0} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText}`
+    : `Employees: ${summary.employeeCount} | Sessions: ${summary.totalSessions} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText}`;
   pdf.font("AppHelvetica-Bold").fontSize(9).fillColor("#111111").text(summaryText);
   pdf.moveDown(1);
 
@@ -121,7 +126,10 @@ export async function createMonthlyAttendancePdf({
       }
       pdf.font("AppHelvetica-Bold").fontSize(11).fillColor("#111111").text(safeCell(employee.name, contentWidth));
       pdf.font("AppHelvetica").fontSize(8).fillColor("#555555").text(`${safeCell(employee.email, 230)} | ${safeCell(employee.timeZone, 150)}`);
-      pdf.font("AppHelvetica").fontSize(8).fillColor("#111111").text(`Sessions: ${employee.report.summary.totalSessions} | Completed: ${employee.report.summary.completedSessions} | Active: ${employee.report.summary.activeSessions} | Worked: ${formatWorkedDuration(employee.report.summary.totalWorkedMs)}`);
+      const engineWorked = employee.report.summary.engineWorkedMs === null || employee.report.summary.engineWorkedMs === undefined
+        ? "Engine hours: Not calculated"
+        : `Engine hours: ${formatWorkedDuration(employee.report.summary.engineWorkedMs)} (${employee.report.summary.engineCalculatedDays ?? 0} calculated days)`;
+      pdf.font("AppHelvetica").fontSize(8).fillColor("#111111").text(`Sessions: ${employee.report.summary.totalSessions} | Completed: ${employee.report.summary.completedSessions} | Active: ${employee.report.summary.activeSessions} | Session time: ${formatWorkedDuration(employee.report.summary.totalWorkedMs)} | ${engineWorked}`);
       pdf.moveDown(0.5);
     }
 

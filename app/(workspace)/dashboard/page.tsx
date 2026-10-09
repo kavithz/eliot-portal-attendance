@@ -1,18 +1,13 @@
-import { ArrowUpRight, CalendarCheck2, ClockAlert, Coffee, House, TimerOff } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
+import { formatInTimeZone } from "date-fns-tz";
 import Link from "next/link";
 import { AttendanceToday } from "@/components/attendance-today";
 import { hasPermission } from "@/lib/auth/permissions";
+import { formatWorkedDuration } from "@/lib/attendance/history";
+import { getEmployeeMonthlyReport } from "@/lib/attendance/reports";
 import { getEmployeeAttendanceDashboard } from "@/lib/attendance/service";
 import { classifyWorkSession } from "@/lib/attendance/schedule";
 import { requirePageUser } from "@/lib/auth/session";
-
-const futureMetrics = [
-  { label: "Leave remaining", icon: Coffee },
-  { label: "Leave taken", icon: CalendarCheck2 },
-  { label: "Half days", icon: ClockAlert },
-  { label: "Late arrivals", icon: TimerOff },
-  { label: "WFH sessions", icon: House },
-];
 
 export default async function DashboardPage() {
   const user = await requirePageUser();
@@ -28,6 +23,17 @@ export default async function DashboardPage() {
   const previousDayActiveSessionTiming = previousDayActiveSession
     ? classifyWorkSession(previousDayActiveSession, user.timeZone)
     : null;
+  const currentMonth = formatInTimeZone(new Date(), user.timeZone, "yyyy-MM");
+  const monthlyReport = await getEmployeeMonthlyReport(user, currentMonth);
+  const thisMonthMetrics = [
+    { label: "Present", value: monthlyReport.summary.presentDays ?? "Not calculated" },
+    { label: "Late arrivals", value: monthlyReport.summary.lateDays ?? "Not calculated" },
+    { label: "Approved leave", value: monthlyReport.summary.approvedLeaveDays ?? "Unavailable" },
+    { label: "Holidays", value: monthlyReport.summary.holidayDays ?? 0 },
+    { label: "Absent", value: monthlyReport.summary.absentDays ?? "Not calculated" },
+    { label: "Session time", value: formatWorkedDuration(monthlyReport.summary.totalWorkedMs) },
+    { label: "Engine hours", value: monthlyReport.summary.engineWorkedMs == null ? "Not calculated" : `${formatWorkedDuration(monthlyReport.summary.engineWorkedMs)} · ${monthlyReport.summary.engineCalculatedDays ?? 0} days` },
+  ];
 
   return (
     <div className="space-y-7">
@@ -66,17 +72,19 @@ export default async function DashboardPage() {
 
       <section aria-labelledby="summary-title">
         <div className="mb-3 flex items-end justify-between gap-3">
-          <div><h2 id="summary-title" className="text-base font-semibold">Attendance summary</h2><p className="mt-1 text-xs text-[var(--muted)]">Available when attendance policies are configured.</p></div>
+          <div><h2 id="summary-title" className="text-base font-semibold">This month</h2><p className="mt-1 text-xs text-[var(--muted)]">{currentMonth} · saved attendance calculations</p></div>
+            <div><h2 id="summary-title" className="text-base font-semibold">This month</h2><p className="mt-1 text-xs text-[var(--muted)]">{currentMonth} · correction-aware attendance engine</p></div>
+          <Link href="/reports" className="text-sm font-medium text-[var(--blue)] hover:underline">Monthly details</Link>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-          {futureMetrics.map(({ label, icon: Icon }) => (
-            <div key={label} className="min-h-[116px] rounded-lg border border-[var(--line)] bg-white p-4 shadow-sm">
-              <Icon size={18} strokeWidth={1.8} className="text-[var(--blue)]" aria-hidden="true" />
-              <p className="mt-4 text-xs font-semibold text-[var(--ink)]">{label}</p>
-              <p className="mt-1 text-[11px] text-[var(--muted)]">Not configured</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          {thisMonthMetrics.map(({ label, value }) => (
+            <div key={label} className="min-h-[104px] rounded-lg border border-[var(--line)] bg-white p-4 shadow-sm">
+              <p className="text-xs font-semibold text-[var(--ink)]">{label}</p>
+              <p className="mt-3 text-xl font-semibold tabular-nums">{value}</p>
             </div>
           ))}
         </div>
+        {monthlyReport.summary.absentDays === null && <p role="note" className="mt-2 text-xs text-[var(--muted)]">Absence is shown only when an ABSENT status has been explicitly saved.</p>}
       </section>
     </div>
   );
