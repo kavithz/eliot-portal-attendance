@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
     summary: {
       totalSessions: report.summary.totalSessions,
       totalWorkedMs: report.summary.totalWorkedMs,
+      workFromHomeDays: report.summary.workFromHomeDays,
       engineWorkedMs: report.summary.engineWorkedMs,
       engineCalculatedDays: report.summary.engineCalculatedDays,
       pendingExpectedHours: report.summary.pendingExpectedOvertimeHours,

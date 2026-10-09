@@ -15,6 +15,7 @@ function dateOrMissing(value: Date | null | undefined) {
 
 function roleLabel(role: string | undefined) {
   if (role === "ADMIN") return "Super Administrator";
+  if (role === "HR_ADMINISTRATOR") return "HR Administrator";
   if (role === "DEPARTMENT_MANAGER") return "Department Manager";
   if (role === "SUPERVISOR") return "Supervisor";
   return role === "EMPLOYEE" ? "Employee" : "No account";

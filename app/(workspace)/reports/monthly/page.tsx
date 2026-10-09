@@ -80,6 +80,7 @@ export default async function MonthlyAttendanceSummaryPage({ searchParams }: { s
     { label: "Late arrivals", value: result.summary.lateDays ?? "Not calculated" },
     { label: "Early departures", value: result.summary.earlyOutDays ?? "Not calculated" },
     { label: "Approved leave", value: result.summary.approvedLeaveDays ?? "Unavailable" },
+    { label: "WFH days", value: result.summary.workFromHomeDays },
     { label: "Holidays", value: result.summary.holidayDays },
     { label: "Absent", value: result.summary.absentDays ?? "Not calculated" },
     { label: "Missing punch", value: result.summary.missingPunchDays },
@@ -165,7 +166,7 @@ export default async function MonthlyAttendanceSummaryPage({ searchParams }: { s
           <header className="border-b border-[var(--line)] px-4 py-3"><h2 id="monthly-summary-employee-list" className="text-base font-semibold">Employee summaries</h2></header>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[2020px] text-left text-sm">
-              <thead className="border-b border-[var(--line)] bg-zinc-50 text-xs text-[var(--muted)]"><tr><th className="px-4 py-3 font-semibold">Employee</th><th className="px-4 py-3 font-semibold">Department</th><th className="px-4 py-3 font-semibold">Workdays</th><th className="px-4 py-3 font-semibold">Present</th><th className="px-4 py-3 font-semibold">Late</th><th className="px-4 py-3 font-semibold">Early out</th><th className="px-4 py-3 font-semibold">Leave</th><th className="px-4 py-3 font-semibold">Holidays</th><th className="px-4 py-3 font-semibold">Absent</th><th className="px-4 py-3 font-semibold">Missing punch</th><th className="px-4 py-3 font-semibold">Weekend</th><th className="px-4 py-3 font-semibold">Undetermined</th><th className="px-4 py-3 font-semibold">Session time</th><th className="px-4 py-3 font-semibold">Engine hours</th><th className="px-4 py-3 font-semibold">Pending OT estimate</th><th className="px-4 py-3 font-semibold">Approved OT estimate</th><th className="px-4 py-3 font-semibold">Rejected OT estimate</th><th className="px-4 py-3 font-semibold">Recorded actual OT</th></tr></thead>
+              <thead className="border-b border-[var(--line)] bg-zinc-50 text-xs text-[var(--muted)]"><tr><th className="px-4 py-3 font-semibold">Employee</th><th className="px-4 py-3 font-semibold">Department</th><th className="px-4 py-3 font-semibold">Workdays</th><th className="px-4 py-3 font-semibold">Present</th><th className="px-4 py-3 font-semibold">Late</th><th className="px-4 py-3 font-semibold">Early out</th><th className="px-4 py-3 font-semibold">Leave</th><th className="px-4 py-3 font-semibold">WFH</th><th className="px-4 py-3 font-semibold">Holidays</th><th className="px-4 py-3 font-semibold">Absent</th><th className="px-4 py-3 font-semibold">Missing punch</th><th className="px-4 py-3 font-semibold">Weekend</th><th className="px-4 py-3 font-semibold">Undetermined</th><th className="px-4 py-3 font-semibold">Session time</th><th className="px-4 py-3 font-semibold">Engine hours</th><th className="px-4 py-3 font-semibold">Pending OT estimate</th><th className="px-4 py-3 font-semibold">Approved OT estimate</th><th className="px-4 py-3 font-semibold">Rejected OT estimate</th><th className="px-4 py-3 font-semibold">Recorded actual OT</th></tr></thead>
               <tbody className="divide-y divide-[var(--line)]">{result.employees.map(({ employee, report }) => <tr key={employee.id}>
                 <td className="px-4 py-3 font-medium">{employee.name}{employee.employeeCode && <span className="mt-0.5 block text-xs text-[var(--muted)]">{employee.employeeCode}</span>}</td>
                 <td className="px-4 py-3 text-[var(--muted)]">{employee.departmentName ?? "—"}</td>
@@ -174,6 +175,7 @@ export default async function MonthlyAttendanceSummaryPage({ searchParams }: { s
                 <td className="px-4 py-3 tabular-nums">{report.summary.lateDays ?? "—"}</td>
                 <td className="px-4 py-3 tabular-nums">{report.summary.earlyOutDays ?? "—"}</td>
                 <td className="px-4 py-3 tabular-nums">{report.summary.approvedLeaveDays ?? "—"}</td>
+                <td className="px-4 py-3 tabular-nums">{report.summary.workFromHomeDays ?? 0}</td>
                 <td className="px-4 py-3 tabular-nums">{report.summary.holidayDays ?? 0}</td>
                 <td className="px-4 py-3 tabular-nums">{report.summary.absentDays ?? "—"}</td>
                 <td className="px-4 py-3 tabular-nums">{report.summary.missingPunchDays ?? "—"}</td>

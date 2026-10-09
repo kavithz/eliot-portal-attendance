@@ -23,6 +23,7 @@ export default async function ReportsPage({
     { label: "Late arrivals", value: report.summary.lateDays ?? "Not calculated" },
     { label: "Early departures", value: report.summary.earlyOutDays ?? "Not calculated" },
     { label: "Approved leave", value: report.summary.approvedLeaveDays ?? "Unavailable" },
+      { label: "WFH days", value: report.summary.workFromHomeDays ?? 0 },
     { label: "Holidays", value: report.summary.holidayDays ?? 0 },
     { label: "Absent", value: report.summary.absentDays ?? "Not calculated" },
     { label: "Missing punch", value: report.summary.missingPunchDays ?? 0 },
@@ -86,6 +87,7 @@ export default async function ReportsPage({
               <div key={day.date} className="px-5 py-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-semibold">{day.date}</p>
+                  {day.approvedWorkFromHome && <span className="rounded-sm bg-slate-100 px-2 py-1 text-xs font-medium text-[var(--blue)]">Approved WFH</span>}
                   <p className="text-xs text-[var(--muted)]">{formatWorkedDuration(day.totalWorkedMs)}</p>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">

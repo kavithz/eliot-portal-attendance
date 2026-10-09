@@ -29,6 +29,7 @@ export default async function DashboardPage() {
     { label: "Present", value: monthlyReport.summary.presentDays ?? "Not calculated" },
     { label: "Late arrivals", value: monthlyReport.summary.lateDays ?? "Not calculated" },
     { label: "Approved leave", value: monthlyReport.summary.approvedLeaveDays ?? "Unavailable" },
+    { label: "WFH days", value: monthlyReport.summary.workFromHomeDays ?? 0 },
     { label: "Holidays", value: monthlyReport.summary.holidayDays ?? 0 },
     { label: "Absent", value: monthlyReport.summary.absentDays ?? "Not calculated" },
     { label: "Session time", value: formatWorkedDuration(monthlyReport.summary.totalWorkedMs) },

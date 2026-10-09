@@ -23,7 +23,7 @@ export function isCountryCode(value: string) {
 const employeeFields = {
   name: z.string().trim().min(1, "Name is required.").max(120),
   email: z.string().trim().email("Enter a valid email.").max(254).transform((value) => value.toLowerCase()),
-  role: z.enum(["EMPLOYEE", "ADMIN", "DEPARTMENT_MANAGER", "SUPERVISOR"]),
+  role: z.enum(["EMPLOYEE", "ADMIN", "HR_ADMINISTRATOR", "DEPARTMENT_MANAGER", "SUPERVISOR"]),
   countryCode: z.string().trim().toUpperCase().refine(isCountryCode, "Enter a valid two-letter country code."),
   timeZone: z.string().trim().refine(isIanaTimeZone, "Choose a valid IANA timezone."),
 };

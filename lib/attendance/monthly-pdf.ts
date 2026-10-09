@@ -20,6 +20,7 @@ type PdfSummary = {
   employeeCount?: number;
   totalSessions: number;
   totalWorkedMs: number;
+  workFromHomeDays?: number;
   engineWorkedMs?: number | null;
   engineCalculatedDays?: number;
   pendingExpectedHours?: number;
@@ -134,8 +135,9 @@ export async function createMonthlyAttendancePdf({
     ? "Engine hours: Not calculated"
     : `Engine hours: ${formatWorkedDuration(summary.engineWorkedMs)} (${summary.engineCalculatedDays ?? 0} calculated days)`;
   const summaryText = summary.employeeCount === undefined
-    ? `Sessions: ${summary.totalSessions} | Completed: ${employees[0]?.report.summary.completedSessions ?? 0} | Active: ${employees[0]?.report.summary.activeSessions ?? 0} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText} | ${overtimeSummaryText(summary)}`
-    : `Employees: ${summary.employeeCount} | Sessions: ${summary.totalSessions} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText} | ${overtimeSummaryText(summary)}`;
+    ? `Sessions: ${summary.totalSessions} | Completed: ${employees[0]?.report.summary.completedSessions ?? 0} | Active: ${employees[0]?.report.summary.activeSessions ?? 0} | Approved WFH days: ${summary.workFromHomeDays ?? 0} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText} | ${overtimeSummaryText(summary)}`
+    : `Employees: ${summary.employeeCount} | Sessions: ${summary.totalSessions} | Approved WFH days: ${summary.workFromHomeDays ?? 0} | Session time: ${formatWorkedDuration(summary.totalWorkedMs)} | ${engineWorkedText} | ${overtimeSummaryText(summary)}`
+    ;
   pdf.font("AppHelvetica-Bold").fontSize(9).fillColor("#111111").text(summaryText);
   pdf.moveDown(1);
 
@@ -164,7 +166,7 @@ export async function createMonthlyAttendancePdf({
         recordedActualDays: employee.report.summary.recordedActualOvertimeDays,
         conflictingActualDays: employee.report.summary.conflictingActualOvertimeDays,
       });
-      pdf.font("AppHelvetica").fontSize(8).fillColor("#111111").text(`Sessions: ${employee.report.summary.totalSessions} | Completed: ${employee.report.summary.completedSessions} | Active: ${employee.report.summary.activeSessions} | Session time: ${formatWorkedDuration(employee.report.summary.totalWorkedMs)} | ${engineWorked} | ${employeeOvertimeSummary}`);
+      pdf.font("AppHelvetica").fontSize(8).fillColor("#111111").text(`Sessions: ${employee.report.summary.totalSessions} | Completed: ${employee.report.summary.completedSessions} | Active: ${employee.report.summary.activeSessions} | Approved WFH days: ${employee.report.summary.workFromHomeDays ?? 0} | Session time: ${formatWorkedDuration(employee.report.summary.totalWorkedMs)} | ${engineWorked} | ${employeeOvertimeSummary}`);
       pdf.moveDown(0.5);
     }
 
@@ -176,6 +178,20 @@ export async function createMonthlyAttendancePdf({
 
     drawTableHeader();
     for (const day of employee.report.days) {
+      if (day.approvedWorkFromHome) {
+        ensureTableRoom();
+        const row = [day.date, "WFH", "-", "-", "-", "Approved"];
+        let x = pdf.page.margins.left;
+        const y = pdf.y;
+        pdf.font("AppHelvetica").fontSize(8).fillColor("#111111");
+        row.forEach((value, index) => {
+          pdf.text(safeCell(value, columns[index].width), x, y, { width: columns[index].width, lineBreak: false });
+          x += columns[index].width;
+        });
+        pdf.y = y + 18;
+        pdf.moveTo(pdf.page.margins.left, pdf.y).lineTo(pageWidth - pdf.page.margins.right, pdf.y).lineWidth(0.35).strokeColor("#e5e7eb").stroke();
+        pdf.y += 4;
+      }
       for (const session of day.sessions) {
         ensureTableRoom();
         const validEnd = session.endAt !== null && session.endAt >= session.startAt;

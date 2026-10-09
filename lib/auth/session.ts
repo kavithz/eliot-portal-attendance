@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { findActiveSessionUser } from "@/lib/auth/session-user";
 import { getEmployeeProfileOnboardingStatus } from "@/lib/employees/profile-service";
+import { hasPermission, type Permission } from "@/lib/auth/permissions";
 
 const cookieName = "attendance_session";
 const sessionDurationSeconds = 60 * 60 * 24 * 7;
@@ -110,12 +111,24 @@ export async function requireAdmin() {
   return user;
 }
 
+export async function requirePermission(permission: Permission) {
+  const user = await requireUser();
+  if (!hasPermission(user.role, permission)) throw new AuthorizationError();
+  return user;
+}
+
 export async function requirePageUser() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   if (user.role !== "ADMIN" && (await getEmployeeProfileOnboardingStatus(user.id)).required) {
     redirect("/complete-profile");
   }
+  return user;
+}
+
+export async function requirePagePermission(permission: Permission) {
+  const user = await requirePageUser();
+  if (!hasPermission(user.role, permission)) redirect("/dashboard");
   return user;
 }
 

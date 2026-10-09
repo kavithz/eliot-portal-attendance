@@ -191,6 +191,19 @@ describe("employee-local monthly report windows", () => {
     assert.equal(overtime.conflictingActualDays, 1);
   });
 
+  it("shows approved WFH dates without inventing sessions and deduplicates dates", () => {
+    const report = buildEmployeeMonthlyReport({ timeZone: "Asia/Colombo" }, "2026-06", [], [], {
+      approvedWorkFromHomeDates: ["2026-06-03", "2026-06-03", "2026-07-01"],
+    });
+
+    assert.equal(report.empty, false);
+    assert.equal(report.summary.workFromHomeDays, 1);
+    assert.equal(report.summary.totalSessions, 0);
+    assert.deepEqual(report.days.map(({ date, sessions, approvedWorkFromHome, totalWorkedMs }) => ({
+      date, sessions, approvedWorkFromHome, totalWorkedMs,
+    })), [{ date: "2026-06-03", sessions: [], approvedWorkFromHome: true, totalWorkedMs: 0 }]);
+  });
+
   it("uses linked Employee records, shift weekdays, holidays, leave, and saved corrections", async () => {
     const calls: Record<string, unknown> = {};
     const database = {
@@ -267,6 +280,12 @@ describe("employee-local monthly report windows", () => {
           ];
         },
       },
+      workFromHomeRequest: {
+        findMany: async ({ where }: { where: { employeeId: string; status: string; date: unknown } }) => {
+          calls.workFromHomeWhere = where;
+          return [{ date: new Date("2026-06-10T00:00:00.000Z") }];
+        },
+      },
     } as never;
 
     const report = await getEmployeeMonthlyReport({
@@ -281,6 +300,13 @@ describe("employee-local monthly report windows", () => {
     assert.deepEqual(calls.rawWhere, { employeeId: "employee-record-1", timestamp: { gte: new Date("2026-05-31T18:30:00.000Z"), lte: new Date("2026-06-30T18:29:59.999Z") } });
     assert.equal((calls.leaveWhere as { status: string }).status, "APPROVED");
     assert.deepEqual(calls.overtimeWhere, { employeeId: "employee-record-1", date: { gte: new Date("2026-06-01T00:00:00.000Z"), lt: new Date("2026-07-01T00:00:00.000Z") } });
+    assert.deepEqual(calls.workFromHomeWhere, {
+      employeeId: "employee-record-1",
+      status: "APPROVED",
+      date: { gte: new Date("2026-06-01T00:00:00.000Z"), lt: new Date("2026-07-01T00:00:00.000Z") },
+    });
+    assert.equal(report.summary.workFromHomeDays, 1);
+    assert.equal(report.days.find(({ date }) => date === "2026-06-10")?.approvedWorkFromHome, true);
     assert.equal(report.summary.totalWorkingDays, 21);
     assert.equal(report.summary.approvedLeaveDays, 2);
     assert.equal(report.summary.holidayDays, 1);

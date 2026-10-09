@@ -152,6 +152,11 @@ describe("employee management", () => {
     assert.equal(result.success, false);
   });
 
+  it("accepts the SRS HR, Department Manager, and Supervisor roles", () => {
+    for (const role of [Role.HR_ADMINISTRATOR, Role.DEPARTMENT_MANAGER, Role.SUPERVISOR]) {
+      assert.equal(createEmployeeSchema.safeParse({ ...employeeInput, role }).success, true);
+    }
+  });
 
   it("requires profile onboarding for every non-administrator role", async () => {
     const stub = createDatabaseStub();

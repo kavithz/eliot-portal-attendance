@@ -16,6 +16,7 @@ export type MonthlyDaySummary = {
   date: string;
   sessions: MonthlySession[];
   totalWorkedMs: number;
+  approvedWorkFromHome?: boolean;
 };
 
 export type MonthlyEmployeeReport = {
@@ -26,6 +27,7 @@ export type MonthlyEmployeeReport = {
     completedSessions: number;
     activeSessions: number;
     totalWorkedMs: number;
+    workFromHomeDays?: number;
     engineWorkedMs?: number | null;
     engineCalculatedDays?: number;
     totalWorkingDays?: number | null;
@@ -141,7 +143,7 @@ export function aggregateMonthlyOvertimeSummaries(summaries: Partial<MonthlyOver
   };
 }
 
-type EmployeeMonthlyReportDatabase = Pick<PrismaClient, "employee" | "workSession" | "attendanceDaily" | "attendanceRaw" | "holiday" | "leaveRequest" | "overtimeRequest">;
+type EmployeeMonthlyReportDatabase = Pick<PrismaClient, "employee" | "workSession" | "attendanceDaily" | "attendanceRaw" | "holiday" | "leaveRequest" | "overtimeRequest" | "workFromHomeRequest">;
 
 function summarizeCalculatedDailyStatuses(dailySummaries: MonthlyDailyStatus[]) {
   type CalculatedStatus = "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "HOLIDAY" | "ABSENT" | "UNDETERMINED";
@@ -273,7 +275,7 @@ export function buildEmployeeMonthlyReport(
   month: string,
   sessions: MonthlySession[],
   dailySummaries: MonthlyDailyStatus[] = [],
-  monthlyTotals: { totalWorkingDays?: number | null; approvedLeaveDays?: number | null; holidayDays?: number | null } & Partial<MonthlyOvertimeSummary> = {},
+  monthlyTotals: { totalWorkingDays?: number | null; approvedLeaveDays?: number | null; holidayDays?: number | null; approvedWorkFromHomeDates?: readonly string[] } & Partial<MonthlyOvertimeSummary> = {},
 ): MonthlyEmployeeReport {
   const window = buildMonthWindow(month, employee.timeZone);
   const filtered = sessions.filter((session) => {
@@ -310,15 +312,25 @@ export function buildEmployeeMonthlyReport(
     byDate.set(date, current);
   }
 
+  const approvedWorkFromHomeDates = new Set(
+    (monthlyTotals.approvedWorkFromHomeDates ?? []).filter((date) => date.slice(0, 7) === month),
+  );
+  for (const date of approvedWorkFromHomeDates) {
+    const current = byDate.get(date) ?? { date, sessions: [], totalWorkedMs: 0 };
+    current.approvedWorkFromHome = true;
+    byDate.set(date, current);
+  }
+
   const days = [...byDate.values()].sort((left, right) => right.date.localeCompare(left.date));
   return {
     monthLabel: month,
-    empty: filtered.length === 0,
+    empty: filtered.length === 0 && approvedWorkFromHomeDates.size === 0,
     summary: {
       totalSessions,
       completedSessions,
       activeSessions,
       totalWorkedMs,
+      workFromHomeDays: approvedWorkFromHomeDates.size,
       ...engineWorkedTime,
       totalWorkingDays: monthlyTotals.totalWorkingDays ?? null,
       approvedLeaveDays: monthlyTotals.approvedLeaveDays ?? null,
@@ -369,7 +381,8 @@ export async function getEmployeeMonthlyReport(
       },
     },
   });
-  const [sessions, dailyRows, rawPunches, holidays, approvedLeaves, overtimeRequests] = await Promise.all([
+
+  const [sessions, dailyRows, rawPunches, holidays, approvedLeaves, overtimeRequests, approvedWorkFromHomeRequests] = await Promise.all([
     database.workSession.findMany({
       where: {
         record: { employeeId },
@@ -423,6 +436,14 @@ export async function getEmployeeMonthlyReport(
     employeeRecord ? database.overtimeRequest.findMany({
       where: { employeeId: employeeRecord.id, date: { gte: dateStart, lt: dateEnd } },
       select: { date: true, status: true, expectedHours: true },
+    }) : Promise.resolve([]),
+    employeeRecord ? database.workFromHomeRequest.findMany({
+      where: {
+        employeeId: employeeRecord.id,
+        status: "APPROVED",
+        date: { gte: dateStart, lt: dateEnd },
+      },
+      select: { date: true },
     }) : Promise.resolve([]),
   ]);
 
@@ -517,6 +538,7 @@ export async function getEmployeeMonthlyReport(
       totalWorkingDays,
       approvedLeaveDays,
       holidayDays: holidayDates.size,
+      approvedWorkFromHomeDates: approvedWorkFromHomeRequests.map(({ date }) => date.toISOString().slice(0, 10)),
       ...overtimeSummary,
     },
   );
@@ -561,6 +583,7 @@ export async function getAdminMonthlyReport(month: string, employeeId?: string) 
       engineWorkedMs,
       engineCalculatedDays,
       employeeCount: rows.length,
+      workFromHomeDays: rows.reduce((total, row) => total + (row.report.summary.workFromHomeDays ?? 0), 0),
       ...overtimeSummary,
     },
   };
@@ -702,6 +725,7 @@ export async function getMonthlyAttendanceSummaryReport(
       weekendDays: sumCalculatedStatuses((report) => report.summary.weekendDays),
       undeterminedDays: sumCalculatedStatuses((report) => report.summary.undeterminedDays),
       totalCalculatedDays: sum((report) => report.summary.totalCalculatedDays ?? 0),
+      workFromHomeDays: sum((report) => report.summary.workFromHomeDays ?? 0),
       ...overtimeSummary,
     },
   };
