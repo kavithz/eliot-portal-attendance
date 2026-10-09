@@ -22,9 +22,50 @@ export type MonthlyEmployeeReport = {
     completedSessions: number;
     activeSessions: number;
     totalWorkedMs: number;
+    presentDays?: number;
+    lateDays?: number;
+    earlyOutDays?: number;
+    missingPunchDays?: number;
+    weekendDays?: number;
+    undeterminedDays?: number;
+    totalCalculatedDays?: number;
   };
   days: MonthlyDaySummary[];
 };
+
+export type MonthlyDailyStatus = {
+  date: string;
+  status?: "PRESENT" | "LATE" | "EARLY_OUT" | "MISSING_PUNCH" | "WEEKEND" | "UNDETERMINED" | string | null;
+  workingHours?: number | null;
+  lateMinutes?: number | null;
+  earlyMinutes?: number | null;
+};
+
+function summarizeCalculatedDailyStatuses(dailySummaries: MonthlyDailyStatus[]) {
+  const counts = {
+    PRESENT: 0,
+    LATE: 0,
+    EARLY_OUT: 0,
+    MISSING_PUNCH: 0,
+    WEEKEND: 0,
+    UNDETERMINED: 0,
+  } as Record<Exclude<MonthlyDailyStatus["status"], null | undefined>, number>;
+
+  for (const item of dailySummaries) {
+    if (!item.status || !(item.status in counts)) continue;
+    counts[item.status as keyof typeof counts] += 1;
+  }
+
+  return {
+    presentDays: counts.PRESENT,
+    lateDays: counts.LATE,
+    earlyOutDays: counts.EARLY_OUT,
+    missingPunchDays: counts.MISSING_PUNCH,
+    weekendDays: counts.WEEKEND,
+    undeterminedDays: counts.UNDETERMINED,
+    totalCalculatedDays: dailySummaries.filter((item) => item.status && item.status in counts).length,
+  };
+}
 
 export function buildMonthWindow(month: string, timeZone: string) {
   const [year, monthIndex] = month.split("-").map(Number);
@@ -44,12 +85,24 @@ export function buildMonthWindow(month: string, timeZone: string) {
   };
 }
 
-export function buildEmployeeMonthlyReport(employee: { timeZone: string }, month: string, sessions: MonthlySession[]): MonthlyEmployeeReport {
+export function buildEmployeeMonthlyReport(
+  employee: { timeZone: string },
+  month: string,
+  sessions: MonthlySession[],
+  dailySummaries: MonthlyDailyStatus[] = [],
+): MonthlyEmployeeReport {
   const window = buildMonthWindow(month, employee.timeZone);
   const filtered = sessions.filter((session) => {
     const sessionDate = new Date(session.startAt);
     return sessionDate >= window.start && sessionDate <= window.end;
   });
+
+  const calculatedStatusSummary = summarizeCalculatedDailyStatuses(
+    dailySummaries.filter((day) => {
+      const date = new Date(`${day.date}T00:00:00.000Z`);
+      return Number.isFinite(date.getTime()) && date >= window.start && date <= window.end;
+    }),
+  );
 
   const byDate = new Map<string, MonthlyDaySummary>();
   let totalSessions = 0;
@@ -82,6 +135,7 @@ export function buildEmployeeMonthlyReport(employee: { timeZone: string }, month
       completedSessions,
       activeSessions,
       totalWorkedMs,
+      ...calculatedStatusSummary,
     },
     days,
   };
@@ -89,26 +143,53 @@ export function buildEmployeeMonthlyReport(employee: { timeZone: string }, month
 
 export async function getEmployeeMonthlyReport(employeeId: string, month: string, employee: { id: string; timeZone: string; name: string; email: string }) {
   const { start: monthStart, end: monthEnd } = buildMonthWindow(month, employee.timeZone);
-  const sessions = await prisma.workSession.findMany({
-    where: {
-      record: { employeeId },
-      startAt: { gte: monthStart, lte: monthEnd },
-    },
-    orderBy: { startAt: "asc" },
-    select: {
-      id: true,
-      mode: true,
-      startAt: true,
-      endAt: true,
-    },
-  });
+  const [sessions, dailySummaries] = await Promise.all([
+    prisma.workSession.findMany({
+      where: {
+        record: { employeeId },
+        startAt: { gte: monthStart, lte: monthEnd },
+      },
+      orderBy: { startAt: "asc" },
+      select: {
+        id: true,
+        mode: true,
+        startAt: true,
+        endAt: true,
+      },
+    }),
+    prisma.attendanceDaily.findMany({
+      where: {
+        employeeId,
+        date: { gte: new Date(`${month}-01T00:00:00.000Z`), lte: monthEnd },
+      },
+      select: {
+        date: true,
+        status: true,
+        workingHours: true,
+        lateMinutes: true,
+        earlyMinutes: true,
+      },
+      orderBy: { date: "asc" },
+    }),
+  ]);
 
-  return buildEmployeeMonthlyReport(employee, month, sessions.map((session) => ({
-    id: session.id,
-    mode: session.mode,
-    startAt: session.startAt,
-    endAt: session.endAt,
-  })));
+  return buildEmployeeMonthlyReport(
+    employee,
+    month,
+    sessions.map((session) => ({
+      id: session.id,
+      mode: session.mode,
+      startAt: session.startAt,
+      endAt: session.endAt,
+    })),
+    dailySummaries.map((row) => ({
+      date: row.date.toISOString().slice(0, 10),
+      status: row.status ?? undefined,
+      workingHours: row.workingHours !== null && row.workingHours !== undefined ? Number(row.workingHours) : null,
+      lateMinutes: row.lateMinutes,
+      earlyMinutes: row.earlyMinutes,
+    })),
+  );
 }
 
 export async function getAdminMonthlyReport(month: string, employeeId?: string) {
@@ -119,22 +200,52 @@ export async function getAdminMonthlyReport(month: string, employeeId?: string) 
   });
 
   const rows = [] as Array<{ employee: { id: string; name: string; email: string; timeZone: string }; report: MonthlyEmployeeReport }>;
-    for (const employee of employees) {
+  for (const employee of employees) {
     const { start: monthStart, end: monthEnd } = buildMonthWindow(month, employee.timeZone);
-    const sessions = await prisma.workSession.findMany({
-      where: {
-        record: { employeeId: employee.id },
-        startAt: { gte: monthStart, lte: monthEnd },
-      },
-      orderBy: { startAt: "asc" },
-      select: { id: true, mode: true, startAt: true, endAt: true },
+    const [sessions, dailySummaries] = await Promise.all([
+      prisma.workSession.findMany({
+        where: {
+          record: { employeeId: employee.id },
+          startAt: { gte: monthStart, lte: monthEnd },
+        },
+        orderBy: { startAt: "asc" },
+        select: { id: true, mode: true, startAt: true, endAt: true },
+      }),
+      prisma.attendanceDaily.findMany({
+        where: {
+          employeeId: employee.id,
+          date: { gte: new Date(`${month}-01T00:00:00.000Z`), lte: monthEnd },
+        },
+        select: {
+          date: true,
+          status: true,
+          workingHours: true,
+          lateMinutes: true,
+          earlyMinutes: true,
+        },
+        orderBy: { date: "asc" },
+      }),
+    ]);
+    rows.push({
+      employee,
+      report: buildEmployeeMonthlyReport(
+        employee,
+        month,
+        sessions.map((session) => ({
+          id: session.id,
+          mode: session.mode,
+          startAt: session.startAt,
+          endAt: session.endAt,
+        })),
+        dailySummaries.map((row) => ({
+          date: row.date.toISOString().slice(0, 10),
+          status: row.status ?? undefined,
+          workingHours: row.workingHours !== null && row.workingHours !== undefined ? Number(row.workingHours) : null,
+          lateMinutes: row.lateMinutes,
+          earlyMinutes: row.earlyMinutes,
+        })),
+      ),
     });
-    rows.push({ employee, report: buildEmployeeMonthlyReport(employee, month, sessions.map((session) => ({
-      id: session.id,
-      mode: session.mode,
-      startAt: session.startAt,
-      endAt: session.endAt,
-    }))) });
   }
 
   const totalSessions = rows.reduce((sum, item) => sum + item.report.summary.totalSessions, 0);

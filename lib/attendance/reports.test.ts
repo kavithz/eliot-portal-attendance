@@ -30,4 +30,27 @@ describe("employee-local monthly report windows", () => {
     assert.throws(() => buildMonthWindow("2026-6", "Asia/Colombo"), /valid report month/);
   });
 
+  it("includes engine-calculated daily statuses in the monthly summary when available", () => {
+    const report = buildEmployeeMonthlyReport(
+      { timeZone: "Asia/Colombo" },
+      "2026-06",
+      [
+        { id: "session-1", mode: "OFFICE", startAt: new Date("2026-06-02T08:45:00.000Z"), endAt: new Date("2026-06-02T17:20:00.000Z") },
+        { id: "session-2", mode: "OFFICE", startAt: new Date("2026-06-03T08:45:00.000Z"), endAt: new Date("2026-06-03T17:20:00.000Z") },
+      ],
+      [
+        { date: "2026-06-02", status: "PRESENT" },
+        { date: "2026-06-03", status: "LATE" },
+        { date: "2026-06-04", status: "EARLY_OUT" },
+        { date: "2026-06-05", status: "MISSING_PUNCH" },
+      ],
+    );
+
+    assert.equal(report.summary.presentDays, 1);
+    assert.equal(report.summary.lateDays, 1);
+    assert.equal(report.summary.earlyOutDays, 1);
+    assert.equal(report.summary.missingPunchDays, 1);
+    assert.equal(report.summary.totalCalculatedDays, 4);
+  });
+
 });
