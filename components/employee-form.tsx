@@ -50,6 +50,7 @@ type OrganizationOption = { id: string; name: string };
 
 export function EmployeeForm({
   employee,
+  canManageAdministratorRoles = true,
   defaultTimeZone = "Asia/Colombo",
   departments,
   designations,
@@ -58,6 +59,7 @@ export function EmployeeForm({
   managers,
 }: {
   employee?: EmployeeFormValues;
+  canManageAdministratorRoles?: boolean;
   defaultTimeZone?: string;
   departments: OrganizationOption[];
   designations: OrganizationOption[];
@@ -149,8 +151,8 @@ export function EmployeeForm({
             <option value="EMPLOYEE">Employee</option>
             <option value="SUPERVISOR">Supervisor</option>
             <option value="DEPARTMENT_MANAGER">Department Manager</option>
-            <option value="HR_ADMINISTRATOR">HR Administrator</option>
-            <option value="ADMIN">Super Administrator</option>
+            {canManageAdministratorRoles && <option value="HR_ADMINISTRATOR">HR Administrator</option>}
+            {canManageAdministratorRoles && <option value="ADMIN">Super Administrator</option>}
           </select>
         </div>
         <div>

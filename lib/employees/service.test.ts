@@ -6,6 +6,7 @@ import { accountIsActive } from "@/lib/auth/account-status";
 import {
   createEmployee,
   EmployeeAccessError,
+  EmployeeAdministratorAccountError,
   EmployeeDuplicateError,
   EmployeeNotFoundError,
   EmployeeReportingAssignmentError,
@@ -24,6 +25,7 @@ import { OrganizationNotFoundError } from "@/lib/organization/service";
 import { ShiftNotFoundError } from "@/lib/shifts/service";
 
 const admin = { role: Role.ADMIN };
+const hrAdmin = { role: Role.HR_ADMINISTRATOR };
 const employeeInput = {
   name: "Ravi Employee",
   employeeCode: "EMP-1001",
@@ -40,6 +42,9 @@ function createDatabaseStub() {
   let createSelect: Record<string, unknown> | undefined;
   let updateData: Record<string, unknown> | undefined;
   const user = {
+    findUnique: async ({ where }: { where: { id: string } }) => storedEmployee?.id === where.id
+      ? { role: storedEmployee.role }
+      : null,
     create: async ({ data, select }: { data: Record<string, unknown>; select: Record<string, unknown> }) => {
       createData = data;
       createSelect = select;
@@ -145,6 +150,47 @@ describe("employee management", () => {
       profile: { email: "contact@example.com" },
     }, stub.database), EmployeeAccessError);
     assert.equal(stub.getUpdateData(), undefined);
+  });
+
+  it("allows HR Administrators to create and update employee accounts", async () => {
+    const stub = createDatabaseStub();
+    await createEmployee(hrAdmin, employeeInput, stub.database);
+    assert.equal(stub.getCreateData()?.role, Role.EMPLOYEE);
+
+    await updateEmployee(hrAdmin, "employee-1", { ...employeeInput, name: "HR Updated Employee", password: "" }, stub.database);
+    assert.equal(stub.getUpdateData()?.name, "HR Updated Employee");
+  });
+
+  it("does not allow HR Administrators to create or modify administrator accounts", async () => {
+    const stub = createDatabaseStub();
+    await assert.rejects(
+      createEmployee(hrAdmin, { ...employeeInput, role: Role.ADMIN }, stub.database),
+      EmployeeAdministratorAccountError,
+    );
+    await assert.rejects(
+      createEmployee(hrAdmin, { ...employeeInput, role: Role.HR_ADMINISTRATOR }, stub.database),
+      EmployeeAdministratorAccountError,
+    );
+    assert.equal(stub.getCreateData(), undefined);
+
+    const administratorDatabase = {
+      user: {
+        findUnique: async () => ({ role: Role.ADMIN }),
+        update: async () => assert.fail("HR must not update a Super Administrator account"),
+      },
+      employee: {},
+      department: {},
+      designation: {},
+      shift: {},
+    } as never;
+    await assert.rejects(
+      updateEmployee(hrAdmin, "super-admin", { ...employeeInput, password: "" }, administratorDatabase),
+      EmployeeAdministratorAccountError,
+    );
+    await assert.rejects(
+      setEmployeeActive(hrAdmin, "super-admin", false, administratorDatabase),
+      EmployeeAdministratorAccountError,
+    );
   });
 
   it("rejects an invalid IANA timezone", () => {
@@ -404,6 +450,9 @@ describe("employee management", () => {
     const options = await listEmployeeReportingOptions(admin, database);
     assert.deepEqual(options.supervisors.map(({ id }) => id), ["supervisor-1"]);
     assert.deepEqual(options.managers.map(({ id }) => id), ["manager-1"]);
+    const hrOptions = await listEmployeeReportingOptions(hrAdmin, database);
+    assert.deepEqual(hrOptions.supervisors.map(({ id }) => id), ["supervisor-1"]);
+    assert.deepEqual(hrOptions.managers.map(({ id }) => id), ["manager-1"]);
     assert.deepEqual(query?.where, {
       user: { is: { isActive: true, role: { in: ["SUPERVISOR", "DEPARTMENT_MANAGER"] } } },
     });
@@ -524,6 +573,22 @@ describe("employee management", () => {
     assert.equal(findArgs?.skip, 20);
     assert.equal(findArgs?.take, 10);
     assert.deepEqual(countWhere, findArgs?.where);
+  });
+
+  it("limits HR employee search to non-administrator accounts", async () => {
+    let findWhere: Record<string, unknown> | undefined;
+    const database = {
+      employee: {
+        findMany: async ({ where }: { where: Record<string, unknown> }) => { findWhere = where; return []; },
+        count: async () => 0,
+      },
+    } as never;
+
+    await listEmployees(hrAdmin, {}, database);
+
+    assert.deepEqual(findWhere, {
+      user: { isNot: { role: { in: [Role.ADMIN, Role.HR_ADMINISTRATOR] } } },
+    });
   });
 
   it("returns an explicit empty result and rejects unauthorized list access", async () => {

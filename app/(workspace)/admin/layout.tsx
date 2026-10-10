@@ -1,6 +1,9 @@
-import { requirePageAdmin } from "@/lib/auth/session";
+import { redirect } from "next/navigation";
+import { hasPermission } from "@/lib/auth/permissions";
+import { requirePageUser } from "@/lib/auth/session";
 
 export default async function AdminLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  await requirePageAdmin();
+  const actor = await requirePageUser();
+  if (actor.role !== "ADMIN" && !hasPermission(actor.role, "employee:manage")) redirect("/dashboard");
   return children;
 }

@@ -2,13 +2,13 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { EmployeeForm } from "@/components/employee-form";
-import { requireAdmin } from "@/lib/auth/session";
+import { requirePagePermission } from "@/lib/auth/session";
 import { getEmployee, listEmployeeReportingOptions } from "@/lib/employees/service";
 import { listOrganizationOptions } from "@/lib/organization/service";
 import { listShiftOptions } from "@/lib/shifts/service";
 
 export default async function EditEmployeePage({ params }: { params: Promise<{ employeeId: string }> }) {
-  const admin = await requireAdmin();
+  const admin = await requirePagePermission("employee:manage");
   const { employeeId } = await params;
   let employee;
   const [organizationOptions, shifts, reportingOptions] = await Promise.all([
@@ -47,7 +47,7 @@ export default async function EditEmployeePage({ params }: { params: Promise<{ e
         countryCode: employee.user.countryCode,
         timeZone: employee.user.timeZone,
         profile: employee.profile,
-      }} departments={organizationOptions.departments} designations={organizationOptions.designations} shifts={shifts} supervisors={reportingOptions.supervisors} managers={reportingOptions.managers} />
+      }} canManageAdministratorRoles={admin.role === "ADMIN"} departments={organizationOptions.departments} designations={organizationOptions.designations} shifts={shifts} supervisors={reportingOptions.supervisors} managers={reportingOptions.managers} />
     </div>
   );
 }

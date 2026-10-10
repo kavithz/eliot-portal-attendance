@@ -2,11 +2,11 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { ShiftForm } from "@/components/shift-form";
-import { requireAdmin } from "@/lib/auth/session";
+import { requirePagePermission } from "@/lib/auth/session";
 import { getShift, ShiftNotFoundError } from "@/lib/shifts/service";
 
 export default async function EditShiftPage({ params }: { params: Promise<{ shiftId: string }> }) {
-  const admin = await requireAdmin();
+  const admin = await requirePagePermission("shift:manage");
   const { shiftId } = await params;
   let shift;
   try {

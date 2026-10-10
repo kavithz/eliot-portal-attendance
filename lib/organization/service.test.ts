@@ -17,6 +17,7 @@ import {
 import { organizationNameSchema } from "@/lib/organization/validation";
 
 const admin = { role: Role.ADMIN };
+const hrAdmin = { role: Role.HR_ADMINISTRATOR };
 const employee = { role: Role.EMPLOYEE };
 type Item = { id: string; name: string; createdAt: Date; updatedAt: Date };
 
@@ -114,6 +115,10 @@ describe("organization management", () => {
     await assert.rejects(createOrganizationRecord("Designation", employee, { name: "Analyst" }, stub.database), OrganizationAccessError);
     await assert.rejects(updateOrganizationRecord("Department", employee, "dept-1", { name: "Ops" }, stub.database), OrganizationAccessError);
     await assert.rejects(deleteOrganizationRecord("Designation", employee, "des-1", stub.database), OrganizationAccessError);
+    await assert.rejects(listOrganizationRecords("Department", hrAdmin, {}, stub.database), OrganizationAccessError);
+    await assert.rejects(createOrganizationRecord("Department", hrAdmin, { name: "People" }, stub.database), OrganizationAccessError);
+    await assert.rejects(updateOrganizationRecord("Department", hrAdmin, "dept-1", { name: "People" }, stub.database), OrganizationAccessError);
+    await assert.rejects(deleteOrganizationRecord("Department", hrAdmin, "dept-1", stub.database), OrganizationAccessError);
     assert.deepEqual(stub.calls, []);
   });
 
@@ -148,6 +153,14 @@ describe("organization management", () => {
     const options = await listOrganizationOptions(admin, createDatabaseStub().database);
     assert.deepEqual(options.departments.map(({ name }) => name), ["Engineering", "People"]);
     assert.deepEqual(options.designations.map(({ name }) => name), ["Engineer", "Lead"]);
+  });
+
+  it("allows HR to read employee assignment options but denies unrelated roles", async () => {
+    const stub = createDatabaseStub();
+    const options = await listOrganizationOptions(hrAdmin, stub.database);
+    assert.equal(options.departments.length, 2);
+    assert.equal(options.designations.length, 2);
+    await assert.rejects(listOrganizationOptions(employee, stub.database), OrganizationAccessError);
   });
 
   it("blocks deleting assigned records and permits deleting unassigned records", async () => {

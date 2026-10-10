@@ -3,15 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/auth/session";
+import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { createShift, deleteShift, getChangedShiftFields, getShift, ShiftInUseError, ShiftNotFoundError, updateShift, writeShiftAuditEvent } from "@/lib/shifts/service";
+import { createShift, deleteShift, getChangedShiftFields, getShift, ShiftAccessError, ShiftInUseError, ShiftNotFoundError, updateShift, writeShiftAuditEvent } from "@/lib/shifts/service";
 
 export type ShiftActionState = { error: string } | null;
 
 function actionError(error: unknown) {
   if (error instanceof z.ZodError) return error.issues[0]?.message ?? "Enter a valid Shift name.";
-  if (error instanceof ShiftInUseError || error instanceof ShiftNotFoundError) return error.message;
+  if (error instanceof ShiftAccessError || error instanceof ShiftInUseError || error instanceof ShiftNotFoundError) return error.message;
   console.error("Shift management action failed", error instanceof Error ? error.name : "Unknown error");
   return "The Shift could not be saved. Try again shortly.";
 }
@@ -22,7 +22,7 @@ export async function saveShiftAction(
   formData: FormData,
 ): Promise<ShiftActionState> {
   try {
-    const admin = await requireAdmin();
+    const admin = await requirePermission("shift:manage");
     const formValues = {
       name: formData.get("name"),
       startTime: formData.get("startTime"),
@@ -76,7 +76,7 @@ export async function saveShiftAction(
 }
 
 export async function deleteShiftAction(id: string) {
-  const admin = await requireAdmin();
+  const admin = await requirePermission("shift:manage");
   try {
     await prisma.$transaction(async (tx) => {
       const deleted = await deleteShift(admin, id, tx);

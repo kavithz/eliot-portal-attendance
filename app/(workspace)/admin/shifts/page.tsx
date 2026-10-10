@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { ShiftList } from "@/components/shift-list";
-import { requireAdmin } from "@/lib/auth/session";
+import { requirePagePermission } from "@/lib/auth/session";
 import { listShifts } from "@/lib/shifts/service";
 
 type SearchParams = { q?: string | string[]; page?: string | string[]; error?: string; success?: string };
 function single(value: string | string[] | undefined) { return typeof value === "string" ? value : ""; }
 
 export default async function ShiftsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const admin = await requireAdmin();
+  const admin = await requirePagePermission("shift:manage");
   const params = await searchParams;
   const query = single(params.q).slice(0, 100);
   const page = Number(single(params.page)) || 1;

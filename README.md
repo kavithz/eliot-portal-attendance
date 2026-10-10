@@ -36,7 +36,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel and Neon setup, environment va
 
 ## Admin employee management
 
-Administrators can search and page through Employee records, inspect linked profile information, and update employee identity/statutory IDs and profile fields. Admin routes and actions require the existing `ADMIN` role. Login email remains on `User`; profile contact email remains on `EmployeeProfile`. Attendance continues to reference `User.id`, and audit events record changed field names without storing personal values. This increment adds no migration; the existing Employee and EmployeeProfile migrations must already be applied for these screens to work.
+Super Administrators and HR Administrators can search and page through Employee records, inspect linked profile information, and update employee identity/statutory IDs and profile fields. HR access is limited to accounts with the existing `employee:manage` permission; only Super Administrators can create or modify administrator accounts. Login email remains on `User`; profile contact email remains on `EmployeeProfile`. Attendance continues to reference `User.id`, and audit events record changed field names without storing personal values. This increment adds no migration; the existing Employee and EmployeeProfile migrations must already be applied for these screens to work.
 
 ## Employee document management
 

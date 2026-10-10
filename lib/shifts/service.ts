@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma, type PrismaClient, type Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { hasPermission } from "@/lib/auth/permissions";
 import { shiftListQuerySchema, shiftRecordSchema } from "@/lib/shifts/validation";
 
 type ShiftAdmin = { role: Role };
@@ -10,7 +11,7 @@ type ShiftAuditDatabase = Pick<PrismaClient, "attendanceAuditLog">;
 
 export class ShiftAccessError extends Error {
   constructor() {
-    super("Only administrators can manage shifts.");
+    super("You do not have permission to manage shifts.");
     this.name = "ShiftAccessError";
   }
 }
@@ -29,8 +30,8 @@ export class ShiftInUseError extends Error {
   }
 }
 
-function assertAdmin(admin: ShiftAdmin) {
-  if (admin.role !== "ADMIN") throw new ShiftAccessError();
+function assertCanManageShifts(actor: ShiftAdmin) {
+  if (!hasPermission(actor.role, "shift:manage")) throw new ShiftAccessError();
 }
 
 function translateShiftError(error: unknown): never {
@@ -98,7 +99,7 @@ export async function listShifts(
   input: unknown = {},
   database: ShiftDatabase = prisma,
 ) {
-  assertAdmin(admin);
+  assertCanManageShifts(admin);
   const { query, page, pageSize } = shiftListQuerySchema.parse(input);
   const where: Prisma.ShiftWhereInput = query ? { name: { contains: query, mode: "insensitive" } } : {};
   const [items, total] = await Promise.all([
@@ -115,7 +116,7 @@ export async function listShifts(
 }
 
 export async function getShift(admin: ShiftAdmin, id: string, database: ShiftDatabase = prisma) {
-  assertAdmin(admin);
+  assertCanManageShifts(admin);
   const shift = await database.shift.findUnique({
     where: { id },
     select: shiftSelect,
@@ -125,7 +126,9 @@ export async function getShift(admin: ShiftAdmin, id: string, database: ShiftDat
 }
 
 export async function listShiftOptions(admin: ShiftAdmin, database: ShiftDatabase = prisma) {
-  assertAdmin(admin);
+  if (admin.role !== "ADMIN" && !hasPermission(admin.role, "shift:manage")) {
+    throw new ShiftAccessError();
+  }
   return database.shift.findMany({
     orderBy: [{ name: "asc" }, { id: "asc" }],
     select: { id: true, name: true },
@@ -137,7 +140,7 @@ export async function createShift(
   input: unknown,
   database: ShiftDatabase = prisma,
 ) {
-  assertAdmin(admin);
+  assertCanManageShifts(admin);
   return database.shift.create({ data: shiftData(input), select: shiftSelect });
 }
 
@@ -147,7 +150,7 @@ export async function updateShift(
   input: unknown,
   database: ShiftDatabase = prisma,
 ) {
-  assertAdmin(admin);
+  assertCanManageShifts(admin);
   const { name, startTime, endTime, breakDurationMinutes, gracePeriodMinutes, lateThresholdMinutes,
     earlyDepartureThresholdMinutes, minimumWorkingHours, overtimeEligible, roundingRules, workingDays } =
     shiftRecordSchema.parse(input);
@@ -175,7 +178,7 @@ export async function updateShift(
 }
 
 export async function deleteShift(admin: ShiftAdmin, id: string, database: ShiftDatabase = prisma) {
-  assertAdmin(admin);
+  assertCanManageShifts(admin);
   try {
     const [employeeReferences, attendanceReferences] = await Promise.all([
       database.employee.count({ where: { shiftId: id } }),
@@ -214,7 +217,7 @@ export async function writeShiftAuditEvent(
       actionType: `SHIFT_${input.operation}`,
       ...(input.operation === "CREATED" ? {} : { previousValues: { shiftId: input.shiftId, changedFields } }),
       ...(input.operation === "DELETED" ? {} : { newValues: { shiftId: input.shiftId, changedFields } }),
-      reason: `Administrator ${input.operation.toLowerCase()} shift; field values are omitted.`,
+      reason: `An authorized administrator ${input.operation.toLowerCase()} a shift; field values are omitted.`,
     },
     select: { id: true },
   });

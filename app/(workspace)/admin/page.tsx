@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, CalendarDays, Clock3, SlidersHorizontal, Users, ChartNoAxesColumn } from "lucide-react";
+import { requirePageUser } from "@/lib/auth/session";
 
 const sections = [
   { href: "/admin/employees", label: "Employees", description: "Employee directory foundation", icon: Users },
@@ -12,7 +14,10 @@ const sections = [
   { href: "/admin/settings", label: "Settings", description: "Policy configuration foundation", icon: SlidersHorizontal },
 ];
 
-export default function AdminPage() {
+export default async function AdminPage() {
+  const actor = await requirePageUser();
+  if (actor.role !== "ADMIN") redirect("/admin/employees");
+
   return (
     <div className="space-y-6">
       <div><p className="text-sm font-medium text-[var(--blue)]">Administration</p><h1 className="mt-1 text-2xl font-semibold sm:text-[28px]">Admin workspace</h1><p className="mt-2 text-sm text-[var(--muted)]">Protected administration routes for the attendance system.</p></div>

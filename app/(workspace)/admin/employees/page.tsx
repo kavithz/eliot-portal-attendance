@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus, Search, Users } from "lucide-react";
-import { requireAdmin } from "@/lib/auth/session";
+import { requirePagePermission } from "@/lib/auth/session";
 import { listEmployees } from "@/lib/employees/service";
 
 type SearchParams = { q?: string | string[]; page?: string | string[] };
@@ -16,7 +16,7 @@ function profileState(completedAt: Date | null, required: boolean) {
 }
 
 export default async function AdminEmployeesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const admin = await requireAdmin();
+  const admin = await requirePagePermission("employee:manage");
   const params = await searchParams;
   const query = single(params.q).slice(0, 100);
   const page = Number(single(params.page)) || 1;

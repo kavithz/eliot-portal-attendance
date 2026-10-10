@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma, PrismaClient, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { hasPermission } from "@/lib/auth/permissions";
 import {
   organizationListQuerySchema,
   organizationRecordSchema,
@@ -113,7 +114,9 @@ export async function listOrganizationOptions(
   admin: OrganizationAdmin,
   database: OrganizationDatabase = prisma,
 ) {
-  assertAdmin(admin);
+  if (admin.role !== "ADMIN" && !hasPermission(admin.role, "employee:manage")) {
+    throw new OrganizationAccessError();
+  }
   const [departments, designations] = await Promise.all([
     database.department.findMany({ orderBy: [{ name: "asc" }, { id: "asc" }], select: { id: true, name: true } }),
     database.designation.findMany({ orderBy: [{ name: "asc" }, { id: "asc" }], select: { id: true, name: true } }),

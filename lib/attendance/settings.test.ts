@@ -48,6 +48,7 @@ describe("organization setting controls", () => {
   it("rejects non-admin setting changes before writing", async () => {
     const stub = createDatabase();
     await assert.rejects(updateOrganizationSetting({ id: "employee-1", role: Role.EMPLOYEE }, { key: "companyName", value: "Other" }, stub.database), SettingAuthorizationError);
+    await assert.rejects(updateOrganizationSetting({ id: "hr-1", role: Role.HR_ADMINISTRATOR }, { key: "companyName", value: "Other" }, stub.database), SettingAuthorizationError);
     assert.equal(stub.getTransactionCount(), 0);
   });
 

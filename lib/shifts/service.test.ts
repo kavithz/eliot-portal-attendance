@@ -8,6 +8,7 @@ import {
   getChangedShiftFields,
   getShift,
   listShifts,
+  listShiftOptions,
   ShiftAccessError,
   ShiftInUseError,
   ShiftNotFoundError,
@@ -17,6 +18,7 @@ import {
 import { shiftRecordSchema } from "@/lib/shifts/validation";
 
 const admin = { role: Role.ADMIN };
+const hrAdmin = { role: Role.HR_ADMINISTRATOR };
 const employee = { role: Role.EMPLOYEE };
 
 type Item = {
@@ -211,8 +213,27 @@ describe("shift validation", () => {
 });
 
 describe("shift management", () => {
-  it("rejects non-admin access before database access", async () => {
+  it("allows HR to list, create, read, update, and delete shifts", async () => {
     const stub = createDatabaseStub();
+    const options = await listShiftOptions(hrAdmin, stub.database);
+    assert.deepEqual(options.map(({ id, name }) => ({ id, name })), [
+      { id: "shift-1", name: "Day" },
+      { id: "shift-2", name: "Night" },
+    ]);
+    const listed = await listShifts(hrAdmin, {}, stub.database);
+    assert.equal(listed.total, 2);
+
+    const created = await createShift(hrAdmin, { name: "HR-created", workingDays: ["MONDAY"] }, stub.database);
+    assert.equal((await getShift(hrAdmin, created.id, stub.database)).name, "HR-created");
+    const updated = await updateShift(hrAdmin, created.id, { name: "HR-updated", workingDays: ["TUESDAY"] }, stub.database);
+    assert.equal(updated.name, "HR-updated");
+    assert.deepEqual(updated.workingDays, ["TUESDAY"]);
+    assert.deepEqual(await deleteShift(hrAdmin, created.id, stub.database), { id: created.id, name: "HR-updated" });
+  });
+
+  it("rejects users without shift management permission before database access", async () => {
+    const stub = createDatabaseStub();
+    await assert.rejects(listShiftOptions(employee, stub.database), ShiftAccessError);
     await assert.rejects(listShifts(employee, {}, stub.database), ShiftAccessError);
     await assert.rejects(getShift(employee, "shift-1", stub.database), ShiftAccessError);
     await assert.rejects(createShift(employee, { name: "Day" }, stub.database), ShiftAccessError);
@@ -314,5 +335,6 @@ describe("shift management", () => {
     assert.deepEqual(entries[2]?.previousValues, { shiftId: "shift-1", changedFields: ["id"] });
     assert.equal("newValues" in (entries[2] ?? {}), false);
     assert.deepEqual(entries[3]?.newValues, { shiftId: "shift-1", changedFields: ["workingDays"] });
+    assert.match(String(entries[0]?.reason), /authorized administrator/);
   });
 });

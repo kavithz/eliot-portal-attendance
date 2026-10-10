@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft, FileText, Pencil } from "lucide-react";
-import { requireAdmin } from "@/lib/auth/session";
+import { requirePagePermission } from "@/lib/auth/session";
 import { EmployeeStatusForm } from "@/components/employee-status-form";
 import { getEmployee } from "@/lib/employees/service";
 
@@ -22,7 +22,7 @@ function roleLabel(role: string | undefined) {
 }
 
 export default async function EmployeeDetailPage({ params }: { params: Promise<{ employeeId: string }> }) {
-  const admin = await requireAdmin();
+  const admin = await requirePagePermission("employee:manage");
   const { employeeId } = await params;
   let employee;
   try {
@@ -38,7 +38,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
         <div className="mt-5 flex flex-wrap items-end justify-between gap-3">
           <div><p className="text-sm font-medium text-[var(--blue)]">Employee details</p><h1 className="mt-1 text-2xl font-semibold sm:text-[28px]">{employee.name}</h1><p className="mt-2 text-sm text-[var(--muted)]">Contact: {valueOrMissing(employee.profile?.email)}</p></div>
           <div className="flex flex-wrap gap-2">
-            <Link href={`/admin/employees/${employee.id}/documents`} className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3.5 text-sm font-medium shadow-sm hover:bg-zinc-50"><FileText size={15} aria-hidden="true" /> Documents</Link>
+            {admin.role === "ADMIN" && <Link href={`/admin/employees/${employee.id}/documents`} className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3.5 text-sm font-medium shadow-sm hover:bg-zinc-50"><FileText size={15} aria-hidden="true" /> Documents</Link>}
             {employee.user && <Link href={`/admin/employees/${employee.user.id}/edit`} className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--line)] bg-white px-3.5 text-sm font-medium shadow-sm hover:bg-zinc-50"><Pencil size={15} aria-hidden="true" /> Edit employee</Link>}
           </div>
         </div>
@@ -61,7 +61,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
           <div className="py-4"><dt className="text-xs text-[var(--muted)]">Account status</dt><dd className="mt-1.5 text-sm font-semibold">{employee.user ? employee.user.isActive ? "Active" : "Inactive" : "No account"}</dd></div>
           <div className="py-4"><dt className="text-xs text-[var(--muted)]">Profile status</dt><dd className="mt-1.5 text-sm font-semibold">{employee.profileCompletedAt ? `Complete · ${dateOrMissing(employee.profileCompletedAt)}` : employee.profileOnboardingRequired ? "Required" : "Not requested"}</dd></div>
         </dl>
-        {employee.user && <div className="border-t border-[var(--line)] px-5 py-4 sm:px-7"><EmployeeStatusForm employeeId={employee.user.id} isActive={employee.user.isActive} /></div>}
+        {employee.user && (admin.role === "ADMIN" || (employee.user.role !== "ADMIN" && employee.user.role !== "HR_ADMINISTRATOR")) && <div className="border-t border-[var(--line)] px-5 py-4 sm:px-7"><EmployeeStatusForm employeeId={employee.user.id} isActive={employee.user.isActive} /></div>}
       </section>
 
       <section className="max-w-4xl space-y-5 rounded-lg border border-[var(--line)] bg-white p-5 shadow-sm sm:p-7">

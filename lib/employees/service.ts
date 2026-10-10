@@ -4,6 +4,7 @@ import type { Prisma, PrismaClient, Role } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth/password";
+import { hasPermission } from "@/lib/auth/permissions";
 import { createEmployeeSchema, updateEmployeeSchema, type AdminEmployeeProfilePatch } from "@/lib/employees/validation";
 import { employeeProfileRequiredFields } from "@/lib/employees/profile-requirements";
 import { validateEmployeeOrganizationAssignments } from "@/lib/organization/service";
@@ -101,8 +102,15 @@ const employeeListQuerySchema = z.object({
 
 export class EmployeeAccessError extends Error {
   constructor() {
-    super("Only administrators can manage employees.");
+    super("Only HR Administrators and Super Administrators can manage employees.");
     this.name = "EmployeeAccessError";
+  }
+}
+
+export class EmployeeAdministratorAccountError extends Error {
+  constructor() {
+    super("Only a Super Administrator can create or modify administrator accounts.");
+    this.name = "EmployeeAdministratorAccountError";
   }
 }
 
@@ -157,17 +165,32 @@ export async function writeEmployeeAuditEvent(
       ...(input.actionType === "EMPLOYEE_UPDATED" ? { previousValues: employeeAuditMetadata(input.changedFields) } : {}),
       newValues: employeeAuditMetadata(input.changedFields),
       reason: input.actionType === "EMPLOYEE_CREATED"
-        ? "Administrator created an employee account; field values are omitted for privacy."
+        ? "An authorized administrator created an employee account; field values are omitted for privacy."
         : input.actionType === "EMPLOYEE_DOCUMENT_UPLOADED"
           ? "An authorized user uploaded an employee document; filenames and contents are omitted for privacy."
-          : "Administrator updated employee identity or profile fields; values are omitted for privacy.",
+          : "An authorized administrator updated employee identity or profile fields; values are omitted for privacy.",
     },
     select: { id: true },
   });
 }
 
-function assertAdmin(admin: EmployeeAdmin) {
-  if (admin.role !== "ADMIN") throw new EmployeeAccessError();
+function assertEmployeeManager(actor: EmployeeAdmin) {
+  if (!hasPermission(actor.role, "employee:manage")) throw new EmployeeAccessError();
+}
+
+function assertCanAssignRole(actor: EmployeeAdmin, role: Role) {
+  if (actor.role !== "ADMIN" && (role === "ADMIN" || role === "HR_ADMINISTRATOR")) {
+    throw new EmployeeAdministratorAccountError();
+  }
+}
+
+async function assertCanManageExistingAccount(actor: EmployeeAdmin, employeeId: string, database: EmployeeDatabase) {
+  if (actor.role === "ADMIN") return;
+  const target = await database.user.findUnique({ where: { id: employeeId }, select: { role: true } });
+  if (!target) throw new EmployeeNotFoundError();
+  if (target.role === "ADMIN" || target.role === "HR_ADMINISTRATOR") {
+    throw new EmployeeAdministratorAccountError();
+  }
 }
 
 function duplicateField(error: unknown): "email" | "employeeCode" | "employeeId" | "nic" | "unknown" | null {
@@ -198,17 +221,20 @@ export async function listEmployees(
   input: unknown = {},
   database: AdminEmployeeDatabase = prisma,
 ) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
   const { query, page, pageSize } = employeeListQuerySchema.parse(input);
-  const where: Prisma.EmployeeWhereInput = query
-    ? {
-        OR: [
-          { name: { contains: query, mode: "insensitive" } },
-          { employeeId: { contains: query, mode: "insensitive" } },
-          { nic: { contains: query, mode: "insensitive" } },
-        ],
-      }
-    : {};
+  const where: Prisma.EmployeeWhereInput = {
+    ...(query ? {
+      OR: [
+        { name: { contains: query, mode: "insensitive" } },
+        { employeeId: { contains: query, mode: "insensitive" } },
+        { nic: { contains: query, mode: "insensitive" } },
+      ],
+    } : {}),
+    ...(admin.role === "HR_ADMINISTRATOR" ? {
+      user: { isNot: { role: { in: ["ADMIN", "HR_ADMINISTRATOR"] } } },
+    } : {}),
+  };
   const [employees, total] = await Promise.all([
     database.employee.findMany({
       where,
@@ -224,9 +250,14 @@ export async function listEmployees(
 }
 
 export async function getEmployee(admin: EmployeeAdmin, employeeId: string, database: AdminEmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
   const employee = await database.employee.findFirst({
-    where: { OR: [{ userId: employeeId }, { id: employeeId }] },
+    where: {
+      OR: [{ userId: employeeId }, { id: employeeId }],
+      ...(admin.role === "HR_ADMINISTRATOR" ? {
+        user: { isNot: { role: { in: ["ADMIN", "HR_ADMINISTRATOR"] } } },
+      } : {}),
+    },
     select: adminEmployeeSelect,
   });
   if (!employee) throw new EmployeeNotFoundError();
@@ -234,7 +265,7 @@ export async function getEmployee(admin: EmployeeAdmin, employeeId: string, data
 }
 
 export async function listEmployeeReportingOptions(admin: EmployeeAdmin, database: AdminEmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
   const employees = await database.employee.findMany({
     where: { user: { is: { isActive: true, role: { in: ["SUPERVISOR", "DEPARTMENT_MANAGER"] } } } },
     select: {
@@ -299,8 +330,9 @@ async function validateEmployeeReportingAssignments(
 }
 
 export async function createEmployee(admin: EmployeeAdmin, input: unknown, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
   const parsed = createEmployeeSchema.parse(input);
+  assertCanAssignRole(admin, parsed.role);
   const { password, nic, epfId, etfId, departmentId, designationId, shiftId, supervisorId, managerId, ...employeeFields } = parsed;
   await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
   await validateEmployeeShiftAssignment(shiftId, database);
@@ -332,8 +364,10 @@ export async function createEmployee(admin: EmployeeAdmin, input: unknown, datab
 }
 
 export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, input: unknown, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
   const parsed = updateEmployeeSchema.parse(input);
+  assertCanAssignRole(admin, parsed.role);
+  await assertCanManageExistingAccount(admin, employeeId, database);
   const { password, nic, epfId, etfId, departmentId, designationId, shiftId, supervisorId, managerId, profile: profilePatch, ...employeeFields } = parsed;
   await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
   await validateEmployeeShiftAssignment(shiftId, database);
@@ -393,7 +427,8 @@ function definedProfileFields(profile: AdminEmployeeProfilePatch | undefined) {
 }
 
 export async function setEmployeeActive(admin: EmployeeAdmin, employeeId: string, isActive: boolean, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
+  await assertCanManageExistingAccount(admin, employeeId, database);
   return withDuplicateTranslation(() => database.user.update({
     where: { id: employeeId },
     data: { isActive },

@@ -3,12 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/auth/session";
+import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import {
   adminEmployeeSelect,
   changedEmployeeFieldNames,
   createEmployee,
+  EmployeeAdministratorAccountError,
   EmployeeDuplicateError,
   setEmployeeActive,
   EmployeeReportingAssignmentError,
@@ -94,6 +95,7 @@ function loadAuditEmployee(database: typeof prisma | Parameters<Parameters<typeo
 }
 
 function actionError(error: unknown) {
+  if (error instanceof EmployeeAdministratorAccountError) return error.message;
   if (error instanceof EmployeeDuplicateError) return error.message;
   if (error instanceof OrganizationNotFoundError) return error.message;
   if (error instanceof ShiftNotFoundError) return error.message;
@@ -106,7 +108,7 @@ function actionError(error: unknown) {
 export async function createEmployeeAction(_state: EmployeeActionState, formData: FormData): Promise<EmployeeActionState> {
   let employee;
   try {
-    const admin = await requireAdmin();
+    const admin = await requirePermission("employee:manage");
     employee = await prisma.$transaction(async (tx) => {
       const created = await createEmployee(admin, employeeFormData(formData), tx);
       await writeEmployeeAuditEvent(tx, {
@@ -127,7 +129,7 @@ export async function createEmployeeAction(_state: EmployeeActionState, formData
 
 export async function updateEmployeeAction(employeeId: string, _state: EmployeeActionState, formData: FormData): Promise<EmployeeActionState> {
   try {
-    const admin = await requireAdmin();
+    const admin = await requirePermission("employee:manage");
     await prisma.$transaction(async (tx) => {
       const previous = await loadAuditEmployee(tx, employeeId);
       if (!previous) throw new Error("Employee not found.");
@@ -153,7 +155,7 @@ export async function updateEmployeeAction(employeeId: string, _state: EmployeeA
 }
 
 export async function setEmployeeActiveAction(employeeId: string, isActive: boolean) {
-  const admin = await requireAdmin();
+  const admin = await requirePermission("employee:manage");
   await prisma.$transaction(async (tx) => {
     const previous = await tx.user.findUnique({ where: { id: employeeId }, select: { isActive: true } });
     if (!previous) throw new Error("Employee not found.");
