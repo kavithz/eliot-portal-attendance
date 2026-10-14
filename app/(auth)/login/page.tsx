@@ -3,8 +3,9 @@ import Image from "next/image";
 import { getCurrentUser } from "@/lib/auth/session";
 import { LoginForm } from "./login-form";
 
-export default async function LoginPage() {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ passwordReset?: string }> }) {
   if (await getCurrentUser()) redirect("/dashboard");
+  const params = await searchParams;
 
   return (
     <main className="flex min-h-screen flex-col bg-slate-900">
@@ -16,7 +17,7 @@ export default async function LoginPage() {
             <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">Sign in to view your attendance records and work sessions.</p>
           </div>
           <div className="border-t border-slate-200" />
-          <LoginForm />
+          <LoginForm passwordResetCompleted={params.passwordReset === "success"} />
         </section>
       </div>
       <footer className="flex min-h-[50px] flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-slate-300 sm:px-6">

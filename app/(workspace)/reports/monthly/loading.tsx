@@ -1,0 +1,3 @@
+export default function MonthlyReportLoading() {
+  return <section aria-label="Loading monthly attendance summary" aria-busy="true" className="space-y-4"><div className="h-8 w-64 animate-pulse rounded bg-zinc-200" /><div className="h-10 max-w-2xl animate-pulse rounded bg-zinc-200" /><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{Array.from({ length: 8 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-lg border border-[var(--line)] bg-white" />)}</div></section>;
+}

@@ -1,13 +1,16 @@
 import { CalendarDays } from "lucide-react";
+import { formatInTimeZone } from "date-fns-tz";
 import { LocalDateTime } from "@/components/local-date-time";
 import { AttendancePunch } from "@/components/attendance-punch";
 import { formatWorkedDuration } from "@/lib/attendance/history";
 import { getEmployeeAttendanceHistory } from "@/lib/attendance/service";
+import { listApprovedWorkFromHomeForAttendance } from "@/lib/wfh/service";
 import { requirePageUser } from "@/lib/auth/session";
 
 export default async function AttendanceHistoryPage() {
   const user = await requirePageUser();
   const { days, invalidSessions } = await getEmployeeAttendanceHistory(user);
+  const approvedWorkFromHome = await listApprovedWorkFromHomeForAttendance(user);
 
   return (
     <div className="space-y-6">
@@ -66,6 +69,25 @@ export default async function AttendanceHistoryPage() {
           </div>
         )}
         {invalidSessions > 0 && <p role="status" className="border-t border-[var(--line)] px-4 py-3 text-xs text-[var(--amber-ink)]">{invalidSessions} session record{invalidSessions === 1 ? "" : "s"} could not be assigned a local date because its start time is invalid.</p>}
+      </section>
+      <section className="overflow-hidden rounded-lg border border-[var(--line)] bg-white shadow-sm" aria-labelledby="approved-wfh-title">
+        <header className="border-b border-[var(--line)] px-4 py-4 sm:px-5">
+          <h2 id="approved-wfh-title" className="text-sm font-semibold">Approved Work From Home</h2>
+          <p className="mt-1 text-xs text-[var(--muted)]">Approved WFH requests are shown separately from recorded work sessions.</p>
+        </header>
+        {approvedWorkFromHome.length === 0 ? (
+          <p role="status" className="px-4 py-5 text-sm text-[var(--muted)]">No approved WFH requests.</p>
+        ) : (
+          <ul className="divide-y divide-[var(--line)]">
+            {approvedWorkFromHome.map((request) => (
+              <li key={request.id} className="grid gap-2 px-4 py-4 text-sm sm:grid-cols-[1fr_1fr_1fr] sm:px-5">
+                <div><p className="text-xs font-semibold text-[var(--muted)]">Date</p><p className="mt-1">{formatInTimeZone(request.date, "UTC", "yyyy-MM-dd")}</p></div>
+                <div><p className="text-xs font-semibold text-[var(--muted)]">Mode / time</p><p className="mt-1"><span className="font-semibold text-[var(--blue)]">WFH</span> · {formatInTimeZone(request.startAt, user.timeZone, "HH:mm")} – {formatInTimeZone(request.endAt, user.timeZone, "HH:mm")} ({user.timeZone})</p></div>
+                <div><p className="text-xs font-semibold text-[var(--muted)]">Work location</p><p className="mt-1 whitespace-pre-wrap">{request.workLocation}</p></div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );

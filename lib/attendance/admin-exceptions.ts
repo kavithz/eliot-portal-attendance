@@ -6,7 +6,7 @@ import { adminAttendanceFilterSchema, type AdminAttendanceFilters } from "@/lib/
 import { prisma } from "@/lib/prisma";
 
 type AdminActor = { role: Role } | null;
-type ExceptionsDatabase = Pick<PrismaClient, "user" | "workSession">;
+type ExceptionsDatabase = Pick<PrismaClient, "user" | "employee" | "workSession">;
 export type AttendanceExceptionCategory = Exclude<AdminAttendanceFilters["exceptionCategory"], "ALL">;
 
 export async function getAdminAttendanceExceptions(

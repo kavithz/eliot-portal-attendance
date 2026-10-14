@@ -2,9 +2,10 @@
 
 import { useActionState } from "react";
 import { KeyRound, LoaderCircle } from "lucide-react";
+import Link from "next/link";
 import { loginAction } from "./actions";
 
-export function LoginForm() {
+export function LoginForm({ passwordResetCompleted = false }: { passwordResetCompleted?: boolean }) {
   const [state, formAction, pending] = useActionState(loginAction, null);
 
   return (
@@ -34,6 +35,7 @@ export function LoginForm() {
           placeholder="Enter your password"
         />
       </div>
+      {passwordResetCompleted && <p role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Your password has been reset. Sign in with your new password.</p>}
       {state?.error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>}
       <button
         type="submit"
@@ -43,6 +45,9 @@ export function LoginForm() {
         <span>{pending ? "Signing in..." : "Sign in"}</span>
         {pending ? <LoaderCircle size={18} className="animate-spin" aria-hidden="true" /> : <KeyRound size={18} aria-hidden="true" />}
       </button>
+      <div className="text-center text-sm">
+        <Link href="/forgot-password" className="font-medium text-slate-700 underline-offset-4 hover:underline">Forgot password?</Link>
+      </div>
     </form>
   );
 }

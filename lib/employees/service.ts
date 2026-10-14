@@ -1,9 +1,14 @@
 import "server-only";
 
-import type { PrismaClient, Role } from "@prisma/client";
+import type { Prisma, PrismaClient, Role } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/auth/password";
-import { createEmployeeSchema, updateEmployeeSchema } from "@/lib/employees/validation";
+import { hasPermission } from "@/lib/auth/permissions";
+import { createEmployeeSchema, updateEmployeeSchema, type AdminEmployeeProfilePatch } from "@/lib/employees/validation";
+import { employeeProfileRequiredFields } from "@/lib/employees/profile-requirements";
+import { validateEmployeeOrganizationAssignments } from "@/lib/organization/service";
+import { validateEmployeeShiftAssignment } from "@/lib/shifts/service";
 
 export const publicEmployeeSelect = {
   id: true,
@@ -18,19 +23,101 @@ export const publicEmployeeSelect = {
   updatedAt: true,
 } as const;
 
-type EmployeeDatabase = Pick<PrismaClient, "user">;
+type EmployeeDatabase = Pick<PrismaClient, "user" | "employee" | "department" | "designation" | "shift">;
+type AdminEmployeeDatabase = Pick<PrismaClient, "employee">;
 type EmployeeAdmin = { role: Role };
+
+export const adminEmployeeSelect = {
+  id: true,
+  name: true,
+  employeeId: true,
+  nic: true,
+  epfId: true,
+  etfId: true,
+  departmentId: true,
+  designationId: true,
+  shiftId: true,
+  supervisorId: true,
+  managerId: true,
+  userId: true,
+  profileCompletedAt: true,
+  profileOnboardingRequired: true,
+  department: { select: { id: true, name: true } },
+  designation: { select: { id: true, name: true } },
+  shift: { select: { id: true, name: true } },
+  supervisor: { select: { id: true, name: true, employeeId: true } },
+  manager: { select: { id: true, name: true, employeeId: true } },
+  user: { select: { id: true, email: true, role: true, isActive: true, countryCode: true, timeZone: true } },
+  profile: {
+    select: {
+      permanentAddress: true,
+      currentAddress: true,
+      emergencyContactName: true,
+      emergencyContactId: true,
+      emergencyContactAddress: true,
+      emergencyContactPhone: true,
+      emergencyContactRelationship: true,
+      contactNumber: true,
+      email: true,
+      linkedInId: true,
+      dateOfBirth: true,
+      maritalStatus: true,
+      spouseName: true,
+      spouseId: true,
+      motherName: true,
+      motherId: true,
+      motherContactNumber: true,
+      fatherName: true,
+      fatherId: true,
+      fatherContactNumber: true,
+    },
+  },
+} as const;
+
+const adminEmployeeListSelect = {
+  id: true,
+  name: true,
+  employeeId: true,
+  nic: true,
+  epfId: true,
+  etfId: true,
+  departmentId: true,
+  designationId: true,
+  shiftId: true,
+  userId: true,
+  profileCompletedAt: true,
+  profileOnboardingRequired: true,
+  department: { select: { id: true, name: true } },
+  designation: { select: { id: true, name: true } },
+  shift: { select: { id: true, name: true } },
+  user: { select: { id: true, isActive: true } },
+  profile: { select: { email: true } },
+} as const;
+
+const employeeListQuerySchema = z.object({
+  query: z.string().trim().max(100).default(""),
+  page: z.coerce.number().int().min(1).catch(1),
+  pageSize: z.coerce.number().int().min(1).max(50).catch(20),
+});
 
 export class EmployeeAccessError extends Error {
   constructor() {
-    super("Only administrators can manage employees.");
+    super("Only HR Administrators and Super Administrators can manage employees.");
     this.name = "EmployeeAccessError";
   }
 }
 
+export class EmployeeAdministratorAccountError extends Error {
+  constructor() {
+    super("Only a Super Administrator can create or modify administrator accounts.");
+    this.name = "EmployeeAdministratorAccountError";
+  }
+}
+
 export class EmployeeDuplicateError extends Error {
-  constructor(readonly field: "email" | "employeeCode" | "unknown") {
-    super(field === "unknown" ? "An employee with these details already exists." : `That ${field === "email" ? "email" : "employee code"} is already in use.`);
+  constructor(readonly field: "email" | "employeeCode" | "employeeId" | "nic" | "unknown") {
+    const label = field === "email" ? "login email" : field === "employeeCode" || field === "employeeId" ? "Employee ID" : "NIC";
+    super(field === "unknown" ? "An employee with these details already exists." : `That ${label} is already in use.`);
     this.name = "EmployeeDuplicateError";
   }
 }
@@ -42,11 +129,71 @@ export class EmployeeNotFoundError extends Error {
   }
 }
 
-function assertAdmin(admin: EmployeeAdmin) {
-  if (admin.role !== "ADMIN") throw new EmployeeAccessError();
+export class EmployeeReportingAssignmentError extends Error {
+  constructor(kind: "supervisor" | "manager") {
+    super(`Choose a valid ${kind === "supervisor" ? "Supervisor" : "Department Manager"} for this employee.`);
+    this.name = "EmployeeReportingAssignmentError";
+  }
 }
 
-function duplicateField(error: unknown): "email" | "employeeCode" | "unknown" | null {
+export function changedEmployeeFieldNames(
+  previous: Record<string, unknown>,
+  current: Record<string, unknown>,
+) {
+  const keys = new Set([...Object.keys(previous), ...Object.keys(current)]);
+  return [...keys].filter((key) => JSON.stringify(previous[key] ?? null) !== JSON.stringify(current[key] ?? null)).sort();
+}
+
+export function employeeAuditMetadata(changedFields: string[]) {
+  return { changedFields };
+}
+
+export async function writeEmployeeAuditEvent(
+  database: Pick<PrismaClient, "attendanceAuditLog">,
+  input: {
+    employeeId: string | null;
+    actorId: string;
+    actionType: "EMPLOYEE_CREATED" | "EMPLOYEE_UPDATED" | "EMPLOYEE_DOCUMENT_UPLOADED";
+    changedFields: string[];
+  },
+) {
+  await database.attendanceAuditLog.create({
+    data: {
+      employeeId: input.employeeId,
+      actorId: input.actorId,
+      actionType: input.actionType,
+      ...(input.actionType === "EMPLOYEE_UPDATED" ? { previousValues: employeeAuditMetadata(input.changedFields) } : {}),
+      newValues: employeeAuditMetadata(input.changedFields),
+      reason: input.actionType === "EMPLOYEE_CREATED"
+        ? "An authorized administrator created an employee account; field values are omitted for privacy."
+        : input.actionType === "EMPLOYEE_DOCUMENT_UPLOADED"
+          ? "An authorized user uploaded an employee document; filenames and contents are omitted for privacy."
+          : "An authorized administrator updated employee identity or profile fields; values are omitted for privacy.",
+    },
+    select: { id: true },
+  });
+}
+
+function assertEmployeeManager(actor: EmployeeAdmin) {
+  if (!hasPermission(actor.role, "employee:manage")) throw new EmployeeAccessError();
+}
+
+function assertCanAssignRole(actor: EmployeeAdmin, role: Role) {
+  if (actor.role !== "ADMIN" && (role === "ADMIN" || role === "HR_ADMINISTRATOR")) {
+    throw new EmployeeAdministratorAccountError();
+  }
+}
+
+async function assertCanManageExistingAccount(actor: EmployeeAdmin, employeeId: string, database: EmployeeDatabase) {
+  if (actor.role === "ADMIN") return;
+  const target = await database.user.findUnique({ where: { id: employeeId }, select: { role: true } });
+  if (!target) throw new EmployeeNotFoundError();
+  if (target.role === "ADMIN" || target.role === "HR_ADMINISTRATOR") {
+    throw new EmployeeAdministratorAccountError();
+  }
+}
+
+function duplicateField(error: unknown): "email" | "employeeCode" | "employeeId" | "nic" | "unknown" | null {
   if (!error || typeof error !== "object" || !("code" in error) || error.code !== "P2002") return null;
   const target = "meta" in error && error.meta && typeof error.meta === "object" && "target" in error.meta
     ? error.meta.target
@@ -54,6 +201,8 @@ function duplicateField(error: unknown): "email" | "employeeCode" | "unknown" | 
   const targetText = Array.isArray(target) ? target.join(",") : String(target ?? "");
   if (targetText.includes("email")) return "email";
   if (targetText.includes("employeeCode")) return "employeeCode";
+  if (targetText.includes("employeeId")) return "employeeId";
+  if (targetText.includes("nic")) return "nic";
   return "unknown";
 }
 
@@ -67,48 +216,219 @@ async function withDuplicateTranslation<T>(operation: () => Promise<T>): Promise
   }
 }
 
-export async function listEmployees(admin: EmployeeAdmin, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
-  return database.user.findMany({
-    select: publicEmployeeSelect,
-    orderBy: [{ isActive: "desc" }, { name: "asc" }],
-  });
+export async function listEmployees(
+  admin: EmployeeAdmin,
+  input: unknown = {},
+  database: AdminEmployeeDatabase = prisma,
+) {
+  assertEmployeeManager(admin);
+  const { query, page, pageSize } = employeeListQuerySchema.parse(input);
+  const where: Prisma.EmployeeWhereInput = {
+    ...(query ? {
+      OR: [
+        { name: { contains: query, mode: "insensitive" } },
+        { employeeId: { contains: query, mode: "insensitive" } },
+        { nic: { contains: query, mode: "insensitive" } },
+      ],
+    } : {}),
+    ...(admin.role === "HR_ADMINISTRATOR" ? {
+      user: { isNot: { role: { in: ["ADMIN", "HR_ADMINISTRATOR"] } } },
+    } : {}),
+  };
+  const [employees, total] = await Promise.all([
+    database.employee.findMany({
+      where,
+        select: adminEmployeeListSelect,
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    database.employee.count({ where }),
+  ]);
+
+  return { employees, total, page, pageSize, pageCount: Math.ceil(total / pageSize) };
 }
 
-export async function getEmployee(admin: EmployeeAdmin, employeeId: string, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
-  const employee = await database.user.findUnique({ where: { id: employeeId }, select: publicEmployeeSelect });
+export async function getEmployee(admin: EmployeeAdmin, employeeId: string, database: AdminEmployeeDatabase = prisma) {
+  assertEmployeeManager(admin);
+  const employee = await database.employee.findFirst({
+    where: {
+      OR: [{ userId: employeeId }, { id: employeeId }],
+      ...(admin.role === "HR_ADMINISTRATOR" ? {
+        user: { isNot: { role: { in: ["ADMIN", "HR_ADMINISTRATOR"] } } },
+      } : {}),
+    },
+    select: adminEmployeeSelect,
+  });
   if (!employee) throw new EmployeeNotFoundError();
   return employee;
 }
 
+export async function listEmployeeReportingOptions(admin: EmployeeAdmin, database: AdminEmployeeDatabase = prisma) {
+  assertEmployeeManager(admin);
+  const employees = await database.employee.findMany({
+    where: { user: { is: { isActive: true, role: { in: ["SUPERVISOR", "DEPARTMENT_MANAGER"] } } } },
+    select: {
+      id: true,
+      name: true,
+      employeeId: true,
+      departmentId: true,
+      user: { select: { role: true } },
+    },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+  });
+  return {
+    supervisors: employees.filter((employee) => employee.user?.role === "SUPERVISOR"),
+    managers: employees.filter((employee) => employee.user?.role === "DEPARTMENT_MANAGER"),
+  };
+}
+
+async function validateEmployeeReportingAssignments(
+  assignments: { supervisorId?: string | null; managerId?: string | null; departmentId?: string | null },
+  userId: string | undefined,
+  database: EmployeeDatabase,
+) {
+  if (!assignments.supervisorId && !assignments.managerId) return;
+
+  const current = userId
+    ? await database.employee.findUnique({ where: { userId }, select: { id: true, departmentId: true } })
+    : null;
+  const departmentId = assignments.departmentId === undefined ? current?.departmentId : assignments.departmentId;
+  const [supervisor, manager] = await Promise.all([
+    assignments.supervisorId
+      ? database.employee.findUnique({
+          where: { id: assignments.supervisorId },
+          select: { id: true, user: { select: { role: true, isActive: true } } },
+        })
+      : Promise.resolve(null),
+    assignments.managerId
+      ? database.employee.findUnique({
+          where: { id: assignments.managerId },
+          select: { id: true, departmentId: true, user: { select: { role: true, isActive: true } } },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (assignments.supervisorId && (
+    !supervisor
+    || supervisor.id === current?.id
+    || supervisor.user?.role !== "SUPERVISOR"
+    || !supervisor.user.isActive
+  )) {
+    throw new EmployeeReportingAssignmentError("supervisor");
+  }
+  if (assignments.managerId && (
+    !manager
+    || manager.id === current?.id
+    || manager.user?.role !== "DEPARTMENT_MANAGER"
+    || !manager.user.isActive
+    || !departmentId
+    || manager.departmentId !== departmentId
+  )) {
+    throw new EmployeeReportingAssignmentError("manager");
+  }
+}
+
 export async function createEmployee(admin: EmployeeAdmin, input: unknown, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
   const parsed = createEmployeeSchema.parse(input);
-  const { password, ...employeeFields } = parsed;
+  assertCanAssignRole(admin, parsed.role);
+  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, supervisorId, managerId, ...employeeFields } = parsed;
+  await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
+  await validateEmployeeShiftAssignment(shiftId, database);
+  await validateEmployeeReportingAssignments({ supervisorId, managerId, departmentId }, undefined, database);
   const passwordHash = await hashPassword(password);
 
   return withDuplicateTranslation(() => database.user.create({
-    data: { ...employeeFields, passwordHash },
+    data: {
+      ...employeeFields,
+      passwordHash,
+      employee: {
+        create: {
+          name: employeeFields.name,
+          employeeId: employeeFields.employeeCode,
+          ...(nic !== undefined ? { nic } : {}),
+          ...(epfId !== undefined ? { epfId } : {}),
+          ...(etfId !== undefined ? { etfId } : {}),
+          departmentId: departmentId ?? null,
+          designationId: designationId ?? null,
+          shiftId: shiftId ?? null,
+          supervisorId: supervisorId ?? null,
+          managerId: managerId ?? null,
+          profileOnboardingRequired: employeeFields.role !== "ADMIN",
+        },
+      },
+    },
     select: publicEmployeeSelect,
   }));
 }
 
 export async function updateEmployee(admin: EmployeeAdmin, employeeId: string, input: unknown, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
   const parsed = updateEmployeeSchema.parse(input);
-  const { password, ...employeeFields } = parsed;
+  assertCanAssignRole(admin, parsed.role);
+  await assertCanManageExistingAccount(admin, employeeId, database);
+  const { password, nic, epfId, etfId, departmentId, designationId, shiftId, supervisorId, managerId, profile: profilePatch, ...employeeFields } = parsed;
+  await validateEmployeeOrganizationAssignments({ departmentId, designationId }, database);
+  await validateEmployeeShiftAssignment(shiftId, database);
+  await validateEmployeeReportingAssignments({ supervisorId, managerId, departmentId }, employeeId, database);
   const passwordHash = password ? await hashPassword(password) : undefined;
+  const profileData = definedProfileFields(profilePatch);
+  const profileNeedsCompletion = employeeProfileRequiredFields.some((field) => profileData[field] === null);
+  const employeeScalars = {
+    name: employeeFields.name,
+    ...(employeeFields.employeeCode !== undefined ? { employeeId: employeeFields.employeeCode } : {}),
+    ...(nic !== undefined ? { nic } : {}),
+    ...(epfId !== undefined ? { epfId } : {}),
+    ...(etfId !== undefined ? { etfId } : {}),
+    ...(departmentId !== undefined ? { departmentId } : {}),
+    ...(designationId !== undefined ? { designationId } : {}),
+    ...(shiftId !== undefined ? { shiftId } : {}),
+    ...(supervisorId !== undefined ? { supervisorId } : {}),
+    ...(managerId !== undefined ? { managerId } : {}),
+  };
+  const employeeUpdate = {
+    ...employeeScalars,
+    ...(profileNeedsCompletion ? { profileOnboardingRequired: true, profileCompletedAt: null } : {}),
+    ...(Object.keys(profileData).length > 0
+      ? { profile: { upsert: { create: profileData, update: profileData } } }
+      : {}),
+  };
+  const employeeCreate = {
+    ...employeeScalars,
+    departmentId: departmentId ?? null,
+    designationId: designationId ?? null,
+    shiftId: shiftId ?? null,
+    supervisorId: supervisorId ?? null,
+    managerId: managerId ?? null,
+    profileOnboardingRequired: false,
+    ...(Object.keys(profileData).length > 0 ? { profile: { create: profileData } } : {}),
+  };
 
   return withDuplicateTranslation(() => database.user.update({
     where: { id: employeeId },
-    data: { ...employeeFields, ...(passwordHash ? { passwordHash } : {}) },
+    data: {
+      ...employeeFields,
+      ...(passwordHash ? { passwordHash } : {}),
+      employee: {
+        upsert: {
+          create: employeeCreate,
+          update: employeeUpdate,
+        },
+      },
+    },
     select: publicEmployeeSelect,
   }));
 }
 
+function definedProfileFields(profile: AdminEmployeeProfilePatch | undefined) {
+  if (!profile) return {};
+  return Object.fromEntries(Object.entries(profile).filter(([, value]) => value !== undefined));
+}
+
 export async function setEmployeeActive(admin: EmployeeAdmin, employeeId: string, isActive: boolean, database: EmployeeDatabase = prisma) {
-  assertAdmin(admin);
+  assertEmployeeManager(admin);
+  await assertCanManageExistingAccount(admin, employeeId, database);
   return withDuplicateTranslation(() => database.user.update({
     where: { id: employeeId },
     data: { isActive },

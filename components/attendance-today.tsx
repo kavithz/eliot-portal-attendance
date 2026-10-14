@@ -21,7 +21,27 @@ function elapsedLabel(milliseconds: number) {
   return `${hours}:${minutes}:${remainder}`;
 }
 
-export function AttendanceToday({ activeSession, activeSessionTiming, day, attendanceDate, timeZone, invalidSessions, completedSessionToday }: { activeSession: Session | null; activeSessionTiming: WorkSessionTiming | null; day: AttendanceDay; attendanceDate: string; timeZone: string; invalidSessions: number; completedSessionToday: boolean }) {
+export function AttendanceToday({
+  activeSession,
+  previousDayActiveSession,
+  activeSessionTiming,
+  previousDayActiveSessionTiming,
+  day,
+  attendanceDate,
+  timeZone,
+  invalidSessions,
+  completedSessionToday,
+}: {
+  activeSession: Session | null;
+  previousDayActiveSession: Session | null;
+  activeSessionTiming: WorkSessionTiming | null;
+  previousDayActiveSessionTiming: WorkSessionTiming | null;
+  day: AttendanceDay;
+  attendanceDate: string;
+  timeZone: string;
+  invalidSessions: number;
+  completedSessionToday: boolean;
+}) {
   const [pending, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [now, setNow] = useState<number | null>(null);
@@ -47,9 +67,16 @@ export function AttendanceToday({ activeSession, activeSessionTiming, day, atten
     });
   }
 
+  const sessionToEnd = activeSession ?? previousDayActiveSession;
   const hasCompletedSession = completedSessionToday || day.sessions.some(({ status }) => status === "COMPLETED");
-  const actions: { action: AttendanceAction; label: string; icon: typeof LogIn }[] = activeSession
-    ? [{ action: activeSession.mode === "WFH" ? "WFH_OUT" : "OUT", label: activeSession.mode === "WFH" ? "WFH-OUT" : "OUT", icon: LogOut }]
+  const actions: { action: AttendanceAction; label: string; icon: typeof LogIn }[] = sessionToEnd
+    ? [{
+        action: sessionToEnd.mode === "WFH" ? "WFH_OUT" : "OUT",
+        label: previousDayActiveSession
+          ? sessionToEnd.mode === "WFH" ? "WFH-OUT (previous day)" : "OUT (previous day)"
+          : sessionToEnd.mode === "WFH" ? "WFH-OUT" : "OUT",
+        icon: LogOut,
+      }]
     : hasCompletedSession ? [] : [
         { action: "IN", label: "IN", icon: LogIn },
         { action: "WFH_IN", label: "WFH-IN", icon: House },
@@ -72,7 +99,13 @@ export function AttendanceToday({ activeSession, activeSessionTiming, day, atten
             </span>
             <div>
               <p className="text-xs text-[var(--muted)]">Current attendance state</p>
-              <p className="mt-1 text-base font-semibold">{activeSession ? `Active ${activeSession.mode === "WFH" ? "WFH" : "office"} session` : "No active session"}</p>
+              <p className="mt-1 text-base font-semibold">
+                {activeSession
+                  ? `Active ${activeSession.mode === "WFH" ? "WFH" : "office"} session`
+                  : previousDayActiveSession
+                    ? "Open session from a previous local day"
+                    : "No active session"}
+              </p>
             </div>
           </div>
           {activeSession ? (
@@ -89,14 +122,33 @@ export function AttendanceToday({ activeSession, activeSessionTiming, day, atten
                 </p>
               </div>
             </div>
+          ) : previousDayActiveSession ? (
+            <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold">This session is not part of today&apos;s attendance.</p>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Started <LocalDateTime value={previousDayActiveSession.startAt} timeZone={timeZone} />.
+                End this {previousDayActiveSession.mode === "WFH" ? "WFH" : "office"} session to continue.
+              </p>
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                {previousDayActiveSessionTiming?.arrival.replaceAll("_", " ")}
+              </p>
+            </div>
           ) : hasCompletedSession ? (
-            <p className="mt-5 max-w-md text-sm leading-6 text-[var(--muted)]">You have already completed attendance for your local day. New attendance actions will be available tomorrow.</p>
+            <p className="mt-5 max-w-md text-sm leading-6 text-[var(--muted)]">
+              {day.sessions.length === 0
+                ? "A session started on an earlier local date ended today. New attendance actions will be available tomorrow."
+                : "You have already completed attendance for your local day. New attendance actions will be available tomorrow."}
+            </p>
           ) : (
             <p className="mt-5 max-w-md text-sm leading-6 text-[var(--muted)]">There is no active session. Start an office or WFH session when you begin work.</p>
           )}
         </div>
         <div className="flex flex-col justify-center border-t border-[var(--line)] pt-5 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
-          <p className="mb-3 text-xs font-semibold text-[var(--muted)]">{hasCompletedSession && !activeSession ? "Attendance complete" : "Available action"}</p>
+          <p className="mb-3 text-xs font-semibold text-[var(--muted)]">
+            {previousDayActiveSession
+              ? "End previous-day session"
+              : hasCompletedSession && !activeSession ? "Attendance complete" : "Available action"}
+          </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
             {actions.map(({ action, label, icon: Icon }) => {
               const isOut = action === "OUT" || action === "WFH_OUT";
@@ -114,7 +166,13 @@ export function AttendanceToday({ activeSession, activeSessionTiming, day, atten
               );
             })}
           </div>
-          {hasCompletedSession && !activeSession && <p className="text-sm font-medium text-[var(--mint-ink)]">Attendance is already completed for today.</p>}
+          {hasCompletedSession && !sessionToEnd && (
+            <p className="text-sm font-medium text-[var(--mint-ink)]">
+              {day.sessions.length === 0
+                ? "A previous-day session ended within today's attendance window."
+                : "Attendance is already completed for today."}
+            </p>
+          )}
           <p aria-live="polite" className={`mt-3 min-h-5 text-xs ${notice?.error ? "text-[var(--danger)]" : "text-[var(--mint-ink)]"}`}>
             {notice?.text ?? ""}
           </p>

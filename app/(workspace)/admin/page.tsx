@@ -1,14 +1,24 @@
 import Link from "next/link";
-import { ArrowRight, CalendarDays, SlidersHorizontal, Users, ChartNoAxesColumn } from "lucide-react";
+import { redirect } from "next/navigation";
+import { ArrowRight, BriefcaseBusiness, CalendarDays, Clock3, SlidersHorizontal, Users, ChartNoAxesColumn } from "lucide-react";
+import { requirePageUser } from "@/lib/auth/session";
 
 const sections = [
   { href: "/admin/employees", label: "Employees", description: "Employee directory foundation", icon: Users },
+  { href: "/admin/departments", label: "Departments", description: "Manage employee departments", icon: BriefcaseBusiness },
+  { href: "/admin/designations", label: "Designations", description: "Manage employee designations", icon: BriefcaseBusiness },
+  { href: "/admin/shifts", label: "Shifts", description: "Manage employee shifts", icon: Clock3 },
+  { href: "/admin/leave-types", label: "Leave Types", description: "Manage configurable Leave Types", icon: BriefcaseBusiness },
+  { href: "/admin/leave-balances", label: "Leave balances", description: "Review employee leave credits and calculated balances", icon: BriefcaseBusiness },
   { href: "/admin/attendance", label: "Attendance", description: "Organization attendance records", icon: CalendarDays },
   { href: "/admin/reports", label: "Reports", description: "Organization reporting foundation", icon: ChartNoAxesColumn },
   { href: "/admin/settings", label: "Settings", description: "Policy configuration foundation", icon: SlidersHorizontal },
 ];
 
-export default function AdminPage() {
+export default async function AdminPage() {
+  const actor = await requirePageUser();
+  if (actor.role !== "ADMIN") redirect("/admin/employees");
+
   return (
     <div className="space-y-6">
       <div><p className="text-sm font-medium text-[var(--blue)]">Administration</p><h1 className="mt-1 text-2xl font-semibold sm:text-[28px]">Admin workspace</h1><p className="mt-2 text-sm text-[var(--muted)]">Protected administration routes for the attendance system.</p></div>

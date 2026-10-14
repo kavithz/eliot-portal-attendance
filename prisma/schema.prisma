@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -18,6 +18,7 @@ model User {
   role                Role                          @default(EMPLOYEE)
   isActive            Boolean                       @default(true)
   employeeCode        String?                       @unique
+  sessionVersion      Int                           @default(0)
   createdAt           DateTime                      @default(now())
   updatedAt           DateTime                      @updatedAt
   settingsUpdated     AppSetting[]
@@ -25,8 +26,18 @@ model User {
   auditEntries        AttendanceAuditLog[]
   correctionRequests  AttendanceCorrectionRequest[]
   reviewedCorrections AttendanceCorrectionRequest[] @relation("AttendanceCorrectionReviewer")
+  requestedAttendanceCorrections AttendanceCorrectionRequest[] @relation("AttendanceCorrectionRequester")
   records             AttendanceRecord[]
   notifications       Notification[]
+  passwordResetTokens PasswordResetToken[]
+  employee            Employee?
+  uploadedEmployeeDocuments EmployeeDocument[] @relation("EmployeeDocumentUploader")
+  leaveRequestsToReview LeaveRequest[] @relation("LeaveRequestCurrentApprover")
+  leaveRequestsReviewed LeaveRequest[] @relation("LeaveRequestReviewer")
+  overtimeRequestsToReview OvertimeRequest[] @relation("OvertimeRequestCurrentApprover")
+  overtimeRequestsReviewed OvertimeRequest[] @relation("OvertimeRequestReviewer")
+  workFromHomeRequestsToReview WorkFromHomeRequest[] @relation("WorkFromHomeRequestCurrentApprover")
+  workFromHomeRequestsReviewed WorkFromHomeRequest[] @relation("WorkFromHomeRequestReviewer")
 
   @@index([role])
 }
@@ -41,6 +52,42 @@ model AttendanceRecord {
   sessions   WorkSession[]
 
   @@index([employeeId, workDate])
+}
+
+model AttendanceRaw {
+  id         String              @id @default(cuid())
+  employeeId String
+  timestamp  DateTime            @db.Timestamptz(3)
+  punchType  AttendancePunchType
+  deviceId   String?
+  source     String
+  location   Json?
+  createdAt  DateTime            @default(now()) @db.Timestamptz(3)
+  employee   Employee            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, timestamp])
+  @@map("attendance_raw")
+}
+
+model AttendanceDaily {
+  id            String    @id @default(cuid())
+  employeeId    String
+  date          DateTime  @db.Date
+  shiftId       String?
+  firstIn       DateTime? @db.Timestamptz(3)
+  lastOut       DateTime? @db.Timestamptz(3)
+  workingHours  Decimal?  @db.Decimal(8, 2)
+  lateMinutes   Int?
+  earlyMinutes  Int?
+  status        String?
+  overtimeHours Decimal?  @db.Decimal(8, 2)
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  shift         Shift?    @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  correctionRequests AttendanceCorrectionRequest[]
+
+  @@index([employeeId, date])
+  @@index([shiftId, date])
+  @@map("attendance_daily")
 }
 
 model WorkSession {
@@ -65,6 +112,7 @@ model AttendanceCorrectionRequest {
   sessionId        String?
   reason           String
   status           AttendanceCorrectionStatus @default(PENDING)
+  currentApprovalStage AttendanceCorrectionApprovalStage?
   originalMode     WorkMode?
   requestedMode    WorkMode?
   originalStartAt  DateTime?
@@ -77,12 +125,70 @@ model AttendanceCorrectionRequest {
   resolvedAt       DateTime?
   createdAt        DateTime                   @default(now())
   updatedAt        DateTime                   @updatedAt
+  dailyAttendanceId String?
+  requesterId       String?
+  originalValues    Json?
+  requestedValues   Json?
   employee         User                       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   reviewedBy       User?                      @relation("AttendanceCorrectionReviewer", fields: [reviewedById], references: [id])
+  requester        User?                      @relation("AttendanceCorrectionRequester", fields: [requesterId], references: [id], onDelete: Restrict)
   session          WorkSession?               @relation(fields: [sessionId], references: [id])
+  dailyAttendance  AttendanceDaily?           @relation(fields: [dailyAttendanceId], references: [id], onDelete: Restrict)
+  auditLogs        AttendanceAuditLog[]
 
   @@index([employeeId, status])
   @@index([status, requestedAt])
+  @@index([status, currentApprovalStage, requestedAt])
+}
+
+model OvertimeRequest {
+  id                  String                   @id @default(cuid())
+  employeeId          String
+  date                DateTime                 @db.Date
+  startAt             DateTime                 @db.Timestamptz(3)
+  endAt               DateTime                 @db.Timestamptz(3)
+  reason              String                   @db.Text
+  project             String                   @db.Text
+  expectedHours       Decimal                  @db.Decimal(8, 2)
+  status              OvertimeRequestStatus    @default(PENDING)
+  currentApprovalStage OvertimeApprovalStage?   @default(SUPERVISOR)
+  currentApproverId   String?
+  decisionReason      String?                  @db.Text
+  reviewedById        String?
+  reviewedAt          DateTime?                @db.Timestamptz(3)
+  createdAt           DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime                 @updatedAt @db.Timestamptz(3)
+  employee            Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  currentApprover     User?                    @relation("OvertimeRequestCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+  reviewedBy          User?                    @relation("OvertimeRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, status, createdAt])
+  @@index([status, currentApprovalStage, currentApproverId, createdAt])
+}
+
+model WorkFromHomeRequest {
+  id                   String                    @id @default(cuid())
+  employeeId           String
+  date                 DateTime                  @db.Date
+  startAt              DateTime                  @db.Timestamptz(3)
+  endAt                DateTime                  @db.Timestamptz(3)
+  reason               String                    @db.Text
+  workLocation         String                    @db.Text
+  status               WorkFromHomeRequestStatus @default(PENDING)
+  currentApprovalStage WorkFromHomeApprovalStage? @default(SUPERVISOR)
+  currentApproverId    String?
+  decisionReason       String?                   @db.Text
+  reviewedById         String?
+  reviewedAt           DateTime?                 @db.Timestamptz(3)
+  createdAt            DateTime                  @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime                  @updatedAt @db.Timestamptz(3)
+  employee             Employee                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  currentApprover      User?                     @relation("WorkFromHomeRequestCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+  reviewedBy           User?                     @relation("WorkFromHomeRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, status, createdAt])
+  @@index([status, currentApprovalStage, currentApproverId, createdAt])
+  @@map("wfh_requests")
 }
 
 model AttendanceAuditLog {
@@ -98,8 +204,9 @@ model AttendanceAuditLog {
   correctionRequestId String?
   createdAt           DateTime     @default(now())
   actor               User?        @relation("AttendanceAuditActor", fields: [actorId], references: [id])
-  employee            User?        @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  employee            User?        @relation(fields: [employeeId], references: [id])
   session             WorkSession? @relation(fields: [sessionId], references: [id])
+  correctionRequest   AttendanceCorrectionRequest? @relation(fields: [correctionRequestId], references: [id], onDelete: Restrict)
 
   @@index([employeeId, createdAt])
   @@index([sessionId, createdAt])
@@ -134,9 +241,229 @@ model AppSetting {
   @@index([category])
 }
 
+model Employee {
+  id                 String    @id @default(cuid())
+  name               String
+  employeeId         String?   @unique
+  nic                String?   @unique
+  epfId              String?
+  etfId              String?
+  departmentId       String?
+  designationId      String?
+  shiftId            String?
+  supervisorId       String?
+  managerId          String?
+  userId             String?   @unique
+  profileCompletedAt DateTime? @db.Timestamptz(3)
+  profileOnboardingRequired Boolean @default(false)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
+  user               User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  profile            EmployeeProfile?
+  documents          EmployeeDocument[]
+  leaveEntitlements LeaveEntitlement[]
+  leaveRequests      LeaveRequest[]
+  department         Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  designation        Designation? @relation(fields: [designationId], references: [id], onDelete: Restrict)
+  shift              Shift? @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  supervisor         Employee? @relation("EmployeeSupervisor", fields: [supervisorId], references: [id], onDelete: Restrict)
+  supervisedEmployees Employee[] @relation("EmployeeSupervisor")
+  manager            Employee? @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: Restrict)
+  managedEmployees   Employee[] @relation("EmployeeManager")
+  attendanceRaw      AttendanceRaw[]
+  attendanceDaily    AttendanceDaily[]
+  overtimeRequests   OvertimeRequest[]
+  workFromHomeRequests WorkFromHomeRequest[]
+
+  @@index([departmentId])
+  @@index([designationId])
+  @@index([shiftId])
+  @@index([supervisorId])
+  @@index([managerId])
+}
+
+model Department {
+  id        String     @id @default(cuid())
+  name      String
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(3)
+  employees Employee[]
+}
+
+model Designation {
+  id        String     @id @default(cuid())
+  name      String
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(3)
+  employees Employee[]
+}
+
+model Shift {
+  id        String     @id @default(cuid())
+  name      String
+  startTime   DateTime?      @db.Time(0)
+  endTime     DateTime?      @db.Time(0)
+  breakDurationMinutes          Int?
+  gracePeriodMinutes            Int?
+  lateThresholdMinutes          Int?
+  earlyDepartureThresholdMinutes Int?
+  minimumWorkingHours           Decimal?       @db.Decimal(8, 2)
+  overtimeEligible              Boolean?
+  roundingRules                 Json?
+  workingDays ShiftWeekday[] @default([])
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(3)
+  employees Employee[]
+  attendanceDaily AttendanceDaily[]
+}
+
+model Holiday {
+  id                       String      @id @default(cuid())
+  date                     DateTime    @db.Date
+  name                     String      @db.VarChar(120)
+  type                     HolidayType
+  branch                   String      @default("") @db.VarChar(120)
+  applicableEmployeeGroups String[]    @default([])
+  isPaid                   Boolean
+  overtimeEligible         Boolean
+  createdAt                DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime    @updatedAt @db.Timestamptz(3)
+
+  @@index([date])
+  @@index([type, date])
+  @@unique([date, name, branch])
+}
+
+model LeaveType {
+  id              String             @id @default(cuid())
+  name            String
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(3)
+  entitlements    LeaveEntitlement[]
+  requests        LeaveRequest[]
+}
+
+model LeaveEntitlement {
+  id             String   @id @default(cuid())
+  employeeId     String
+  leaveTypeId    String
+  periodStart    DateTime @db.Date
+  periodEnd      DateTime @db.Date
+  openingBalance Decimal  @default(0) @db.Decimal(12, 2)
+  entitlement    Decimal  @default(0) @db.Decimal(12, 2)
+  carryForward   Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, leaveTypeId, periodStart, periodEnd])
+  @@index([leaveTypeId, periodStart, periodEnd])
+}
+
+model LeaveRequest {
+  id                   String             @id @default(cuid())
+  employeeId           String
+  leaveTypeId          String
+  startDate            DateTime           @db.Date
+  endDate              DateTime           @db.Date
+  reason               String             @db.Text
+  attachmentDocumentId String?
+  status               LeaveRequestStatus @default(PENDING)
+  currentApprovalStage String?
+  currentApproverId    String?
+  decisionReason       String?            @db.Text
+  reviewedById         String?
+  reviewedAt           DateTime?          @db.Timestamptz(3)
+  createdAt            DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime           @updatedAt @db.Timestamptz(3)
+  employee             Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType            LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  attachmentDocument   EmployeeDocument?  @relation(fields: [attachmentDocumentId], references: [id], onDelete: Restrict)
+  currentApprover      User?              @relation("LeaveRequestCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+  reviewedBy           User?              @relation("LeaveRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, status, createdAt])
+  @@index([leaveTypeId, createdAt])
+  @@index([status, createdAt])
+  @@index([currentApproverId, status])
+}
+
+model EmployeeProfile {
+  employeeRecordId              String    @id
+  permanentAddress              String?   @db.Text
+  currentAddress                String?   @db.Text
+  emergencyContactName          String?   @db.VarChar(120)
+  emergencyContactId            String?   @db.VarChar(120)
+  emergencyContactAddress       String?   @db.Text
+  emergencyContactPhone         String?   @db.VarChar(64)
+  emergencyContactRelationship  String?   @db.VarChar(100)
+  contactNumber                 String?   @db.VarChar(64)
+  email                         String?   @db.VarChar(254)
+  linkedInId                    String?   @db.VarChar(512)
+  dateOfBirth                   DateTime? @db.Date
+  maritalStatus                 String?   @db.VarChar(50)
+  spouseName                    String?   @db.VarChar(120)
+  spouseId                      String?   @db.VarChar(120)
+  motherName                    String?   @db.VarChar(120)
+  motherId                      String?   @db.VarChar(120)
+  motherContactNumber           String?   @db.VarChar(64)
+  fatherName                    String?   @db.VarChar(120)
+  fatherId                      String?   @db.VarChar(120)
+  fatherContactNumber           String?   @db.VarChar(64)
+  createdAt                     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime  @updatedAt @db.Timestamptz(3)
+  employee                      Employee  @relation(fields: [employeeRecordId], references: [id], onDelete: Cascade)
+}
+
+model EmployeeDocument {
+  id               String               @id @default(cuid())
+  employeeId       String
+  type             EmployeeDocumentType
+  originalFilename String               @db.VarChar(255)
+  storageKey       String               @unique
+  contentType      String               @db.VarChar(255)
+  sizeBytes        BigInt
+  uploadedAt       DateTime             @default(now()) @db.Timestamptz(3)
+  expiresAt        DateTime?            @db.Date
+  uploadedById     String?
+  employee         Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  uploadedBy       User?                @relation("EmployeeDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  leaveRequests    LeaveRequest[]
+
+  @@index([employeeId, uploadedAt])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt DateTime @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+}
+
+model PasswordResetRateLimit {
+  id           String   @id @default(cuid())
+  keyHash      String
+  windowStart  DateTime @db.Timestamptz(3)
+  requestCount Int      @default(1)
+
+  @@unique([keyHash, windowStart])
+  @@index([windowStart])
+}
+
 enum Role {
   EMPLOYEE
   ADMIN
+  HR_ADMINISTRATOR
+  DEPARTMENT_MANAGER
+  SUPERVISOR
 }
 
 enum WorkMode {
@@ -144,8 +471,77 @@ enum WorkMode {
   WFH
 }
 
+enum AttendancePunchType {
+  IN
+  OUT
+}
+
 enum AttendanceCorrectionStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum AttendanceCorrectionApprovalStage {
+  SUPERVISOR
+  HR
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RETURNED
+  CANCELLED
+}
+
+enum OvertimeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OvertimeApprovalStage {
+  SUPERVISOR
+  MANAGER
+}
+
+enum WorkFromHomeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum WorkFromHomeApprovalStage {
+  SUPERVISOR
+  MANAGER
+}
+
+enum ShiftWeekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum HolidayType {
+  PUBLIC
+  POYA
+  COMPANY
+  SPECIAL
+  BRANCH_SPECIFIC
+}
+
+enum EmployeeDocumentType {
+  APPOINTMENT_LETTER
+  EMPLOYMENT_AGREEMENT
+  NIC_COPY
+  PASSPORT
+  CERTIFICATE
+  CONTRACT
+  INTERNSHIP_AGREEMENT
+  OTHER
 }

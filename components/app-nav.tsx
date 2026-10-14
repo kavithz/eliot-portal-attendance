@@ -4,14 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { Bell, CalendarDays, ChartNoAxesColumn, ClipboardList, LayoutDashboard, Menu, Settings, Shield, X, type LucideIcon } from "lucide-react";
+import { Bell, BriefcaseBusiness, CalendarDays, ChartNoAxesColumn, ClipboardList, Clock3, House, LayoutDashboard, Menu, Settings, Shield, Users, X, type LucideIcon } from "lucide-react";
 
 type NavigationLink = { href: string; label: string; icon: LucideIcon };
 
 const employeeLinks: NavigationLink[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/attendance", label: "Attendance", icon: CalendarDays },
-  { href: "/reports", label: "My reports", icon: ChartNoAxesColumn },
+  { href: "/holidays", label: "Holiday calendar", icon: CalendarDays },
+  { href: "/leave", label: "Leave", icon: BriefcaseBusiness },
+  { href: "/reports", label: "My monthly summary", icon: ChartNoAxesColumn },
   { href: "/notifications", label: "Notifications", icon: Bell },
 ];
 
@@ -22,18 +24,66 @@ const employeeLinksWithSettings: NavigationLink[] = [
   settingsLink,
 ];
 
-function getLinks(isAdmin: boolean) {
-  return isAdmin ? [
-    ...employeeLinks,
+function getLinks(isAdmin: boolean, canManageEmployees: boolean, canReadTeamAttendance: boolean, canManageShifts: boolean, canManageLeave: boolean, canReadLeaveBalance: boolean, canReviewCorrections: boolean, canReviewLeave: boolean, canReadReports: boolean, canReadDepartmentReports: boolean, canSubmitOvertime: boolean, canReviewOvertime: boolean, canSubmitWorkFromHome: boolean, canReviewWorkFromHome: boolean) {
+  const links = isAdmin ? [
+    ...employeeLinks.filter(({ href }) => href !== "/leave"),
     { href: "/admin", label: "Admin", icon: Shield },
+    { href: "/admin/employees", label: "Employees", icon: Users },
+    { href: "/admin/shifts", label: "Shifts", icon: Clock3 },
+    { href: "/admin/attendance/daily", label: "Daily attendance", icon: CalendarDays },
+    { href: "/admin/leave-types", label: "Leave Types", icon: BriefcaseBusiness },
+    { href: "/admin/leave-balances", label: "Leave balances", icon: BriefcaseBusiness },
     { href: "/admin/audit", label: "Audit history", icon: ClipboardList },
     settingsLink,
-  ] : employeeLinksWithSettings;
+  ] : [...employeeLinksWithSettings];
+  if (!isAdmin && canManageEmployees) {
+    links.splice(links.length - 1, 0, { href: "/admin/employees", label: "Employees", icon: Users });
+  }
+  if (!isAdmin && canReadTeamAttendance) {
+    links.splice(links.length - 1, 0, { href: "/admin/attendance/daily", label: "Team attendance", icon: CalendarDays });
+  }
+  if (!isAdmin && canManageShifts) {
+    links.splice(links.length - 1, 0, { href: "/admin/shifts", label: "Shifts", icon: Clock3 });
+  }
+  if (!isAdmin && canManageLeave) {
+    links.splice(links.length - 1, 0, { href: "/admin/leave-balances", label: "Leave balances", icon: BriefcaseBusiness });
+  }
+  if (canReadReports || canReadDepartmentReports) {
+    links.splice(links.length - 1, 0, { href: "/reports/monthly", label: "Monthly summary", icon: ChartNoAxesColumn });
+  }
+  if (!isAdmin && canReadLeaveBalance) {
+    const leaveIndex = links.findIndex(({ href }) => href === "/leave");
+    links.splice(leaveIndex + 1, 0, { href: "/leave/balance", label: "Leave balance", icon: BriefcaseBusiness });
+  }
+  if (!isAdmin && canSubmitOvertime) {
+    const leaveIndex = links.findIndex(({ href }) => href === "/leave");
+    links.splice(leaveIndex + 1, 0, { href: "/overtime", label: "Overtime", icon: Clock3 });
+  }
+  if (!isAdmin && canSubmitWorkFromHome) {
+    const leaveIndex = links.findIndex(({ href }) => href === "/leave");
+    links.splice(leaveIndex + 1, 0, { href: "/wfh", label: "Work From Home", icon: House });
+  }
+  if (canReviewCorrections) {
+    links.splice(links.length - 1, 0, { href: "/approvals/attendance-corrections", label: "Correction approvals", icon: ClipboardList });
+  }
+  if (canReviewLeave) {
+    links.splice(links.length - 1, 0, { href: "/approvals/leave", label: "Leave approvals", icon: BriefcaseBusiness });
+  }
+  if (canReviewOvertime) {
+    links.splice(links.length - 1, 0, { href: "/approvals/overtime", label: "Overtime approvals", icon: Clock3 });
+  }
+  if (canReviewWorkFromHome) {
+    links.splice(links.length - 1, 0, { href: "/approvals/wfh", label: "WFH approvals", icon: House });
+  }
+  if (canReadReports) {
+    links.splice(links.length - 1, 0, { href: "/reports/attendance-corrections", label: "Correction report", icon: ChartNoAxesColumn });
+  }
+  return links;
 }
 
 function NavigationItems({ links, pathname, onNavigate }: { links: NavigationLink[]; pathname: string; onNavigate?: () => void }) {
   return links.map(({ href, label, icon: Icon }) => {
-    const active = href === "/admin" ? pathname.startsWith("/admin") : pathname === href;
+    const active = href === "/admin" || href === "/admin/employees" || href === "/admin/leave-types" || href === "/admin/leave-balances" || href === "/admin/shifts" || href === "/admin/attendance/daily" || href === "/leave" || href === "/overtime" || href === "/wfh" || href === "/reports/monthly" || href.startsWith("/approvals/") ? pathname.startsWith(href) : pathname === href;
     return (
       <Link key={href} href={href} onClick={onNavigate} aria-current={active ? "page" : undefined} className={`flex min-h-11 items-center gap-3 rounded-sm px-3 py-2.5 text-sm font-medium transition ${active ? "bg-white/10 text-white" : "text-slate-200/80 hover:bg-white/10 hover:text-white"}`}>
         <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
@@ -43,18 +93,18 @@ function NavigationItems({ links, pathname, onNavigate }: { links: NavigationLin
   });
 }
 
-export function AppNav({ isAdmin }: { isAdmin: boolean }) {
+export function AppNav({ isAdmin, canManageEmployees, canReadTeamAttendance, canManageShifts, canManageLeave, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canReadDepartmentReports, canSubmitOvertime, canReviewOvertime, canSubmitWorkFromHome, canReviewWorkFromHome }: { isAdmin: boolean; canManageEmployees: boolean; canReadTeamAttendance: boolean; canManageShifts: boolean; canManageLeave: boolean; canReadLeaveBalance: boolean; canReviewCorrections: boolean; canReviewLeave: boolean; canReadReports: boolean; canReadDepartmentReports: boolean; canSubmitOvertime: boolean; canReviewOvertime: boolean; canSubmitWorkFromHome: boolean; canReviewWorkFromHome: boolean }) {
   const pathname = usePathname();
 
   return (
     <nav aria-label="Main navigation" className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       <p className="px-3 pb-2 text-xs font-semibold text-white/50">Workspace</p>
-      <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin)} pathname={pathname} /></div>
+      <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin, canManageEmployees, canReadTeamAttendance, canManageShifts, canManageLeave, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canReadDepartmentReports, canSubmitOvertime, canReviewOvertime, canSubmitWorkFromHome, canReviewWorkFromHome)} pathname={pathname} /></div>
     </nav>
   );
 }
 
-export function MobileNav({ isAdmin, user }: { isAdmin: boolean; user: { name: string; email: string } }) {
+export function MobileNav({ isAdmin, canManageEmployees, canReadTeamAttendance, canManageShifts, canManageLeave, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canReadDepartmentReports, canSubmitOvertime, canReviewOvertime, canSubmitWorkFromHome, canReviewWorkFromHome, user }: { isAdmin: boolean; canManageEmployees: boolean; canReadTeamAttendance: boolean; canManageShifts: boolean; canManageLeave: boolean; canReadLeaveBalance: boolean; canReviewCorrections: boolean; canReviewLeave: boolean; canReadReports: boolean; canReadDepartmentReports: boolean; canSubmitOvertime: boolean; canReviewOvertime: boolean; canSubmitWorkFromHome: boolean; canReviewWorkFromHome: boolean; user: { name: string; email: string } }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -82,7 +132,7 @@ export function MobileNav({ isAdmin, user }: { isAdmin: boolean; user: { name: s
             </div>
             <nav aria-label="Mobile main navigation" className="flex-1 overflow-y-auto px-4 py-4">
               <p className="px-3 pb-2 text-xs font-semibold text-white/50">Workspace</p>
-              <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin)} pathname={pathname} onNavigate={() => setOpen(false)} /></div>
+              <div className="flex flex-col gap-1"><NavigationItems links={getLinks(isAdmin, canManageEmployees, canReadTeamAttendance, canManageShifts, canManageLeave, canReadLeaveBalance, canReviewCorrections, canReviewLeave, canReadReports, canReadDepartmentReports, canSubmitOvertime, canReviewOvertime, canSubmitWorkFromHome, canReviewWorkFromHome)} pathname={pathname} onNavigate={() => setOpen(false)} /></div>
             </nav>
             <div className="border-t border-white/15 p-4">
               <p className="truncate text-xs font-semibold">{user.name}</p>

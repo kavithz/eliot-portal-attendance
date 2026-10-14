@@ -51,6 +51,11 @@ function database(employees: Employee[], daySessions: Session[], openSessions: S
       return employees.filter((item) => item.role === where.role && item.isActive === where.isActive && (!where.id || item.id === where.id));
     },
   };
+  const employeeRecord = {
+    findMany: async ({ where }: { where: { userId: { in: string[] } } }) => employees
+      .filter((item) => where.userId.in.includes(item.id))
+      .map((item) => ({ id: `record-${item.id}`, name: `HR ${item.name}`, employeeId: item.employeeCode, userId: item.id })),
+  };
   const workSession = {
     findMany: async ({ where }: { where: SessionQueryWhere }) => {
       if (where.endAt === null) {
@@ -63,7 +68,7 @@ function database(employees: Employee[], daySessions: Session[], openSessions: S
       return daySessions.filter((item) => employeeIds.includes(item.record.employee.id) && (!where.mode || item.mode === where.mode));
     },
   };
-  return { user, workSession } as never;
+  return { user, employee: employeeRecord, workSession } as never;
 }
 
 const admin = { role: Role.ADMIN };

@@ -1,18 +1,27 @@
 import "server-only";
 
-import type { PrismaClient, Role } from "@prisma/client";
+import type { Prisma, PrismaClient, Role } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
+import { hasPermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { adminEmployeeSelect, AdminAttendanceAuthorizationError } from "@/lib/attendance/admin-service";
 import { adminAttendanceFilterSchema } from "@/lib/attendance/admin-validation";
 import { formatWorkedDuration, groupSessionsByEmployeeLocalDay } from "@/lib/attendance/history";
 import { getEmployeeLocalDayWindow } from "@/lib/attendance/timezone";
+import { resolveAttendanceEmployees } from "@/lib/attendance/employee-link";
 
-type AdminActor = { role: Role } | null;
-type SummaryDatabase = Pick<PrismaClient, "user" | "workSession">;
+type AdminActor = { id?: string; role: Role } | null;
+type SummaryDatabase = Pick<PrismaClient, "user" | "employee" | "workSession">;
 
-function assertAdmin(admin: AdminActor): asserts admin is { role: Role } {
-  if (!admin || admin.role !== "ADMIN") throw new AdminAttendanceAuthorizationError();
+function assertAdmin(admin: AdminActor): asserts admin is Exclude<AdminActor, null> {
+  if (!admin || (
+    admin.role !== "ADMIN"
+    && !hasPermission(admin.role, "attendance:manage")
+    && !hasPermission(admin.role, "attendance:department:read")
+    && !(hasPermission(admin.role, "attendance:assigned:read") && hasPermission(admin.role, "attendance:monitor"))
+  )) {
+    throw new AdminAttendanceAuthorizationError();
+  }
 }
 
 function nextLocalDay(date: string, timeZone: string) {
@@ -30,21 +39,43 @@ export async function getAdminAttendanceSummary(
   const mode = input.mode ?? "ALL";
   if (!date) throw new Error("Select a report date.");
 
+  let scope: Prisma.UserWhereInput = {};
+  if (admin.role === "DEPARTMENT_MANAGER") {
+    const manager = await database.employee.findUnique({
+      where: { userId: admin.id ?? "" },
+      select: { departmentId: true },
+    });
+    scope = manager?.departmentId
+      ? { employee: { is: { departmentId: manager.departmentId } } }
+      : { id: { in: [] } };
+  } else if (admin.role === "SUPERVISOR") {
+    scope = {
+      employee: {
+        is: { supervisor: { userId: admin.id ?? "", user: { role: "SUPERVISOR", isActive: true } } },
+      },
+    };
+  }
+
   const employees = await database.user.findMany({
-    where: { role: "EMPLOYEE", isActive: true, ...(employeeId ? { id: employeeId } : {}) },
+    where: { role: "EMPLOYEE", isActive: true, ...scope, ...(employeeId ? { id: employeeId } : {}) },
     select: adminEmployeeSelect,
     orderBy: { name: "asc" },
   });
-  const employeeIds = employees.map((employee) => employee.id);
-  if (employeeIds.length === 0) {
+  if (employees.length === 0) {
     return {
       date,
       employees: [],
       metrics: { totalEmployees: 0, withAttendance: 0, withoutAttendance: 0, lateArrivals: 0, earlyDepartures: 0, completed: 0, activeNow: 0 },
     };
   }
+  const employeeRecords = await resolveAttendanceEmployees(employees.map(({ id }) => id), database);
+  const employeesWithRecords = employees.map((employee) => ({
+    ...employee,
+    employeeRecord: employeeRecords.get(employee.id) ?? null,
+  }));
+  const employeeIds = employeesWithRecords.map((employee) => employee.id);
 
-  const localRanges = employees.map((employee) => {
+  const localRanges = employeesWithRecords.map((employee) => {
     const { startAt } = getEmployeeLocalDayWindow(fromZonedTime(`${date}T12:00:00.000`, employee.timeZone), employee.timeZone);
     const endAt = nextLocalDay(date, employee.timeZone);
     return { record: { employeeId: employee.id }, startAt: { gte: startAt, lt: endAt } };
@@ -61,16 +92,26 @@ export async function getAdminAttendanceSummary(
       select: { mode: true, startAt: true, record: { select: { employeeId: true } } },
     }),
   ]);
+  const daySessionsWithEmployeeRecords = daySessions.map((session) => ({
+    ...session,
+    record: {
+      ...session.record,
+      employee: {
+        ...session.record.employee,
+        employeeRecord: employeeRecords.get(session.record.employee.id) ?? null,
+      },
+    },
+  }));
 
-  const sessionsByEmployee = new Map<string, typeof daySessions>();
-  for (const session of daySessions) {
+  const sessionsByEmployee = new Map<string, typeof daySessionsWithEmployeeRecords>();
+  for (const session of daySessionsWithEmployeeRecords) {
     const id = session.record.employee.id;
     const rows = sessionsByEmployee.get(id) ?? [];
     rows.push(session);
     sessionsByEmployee.set(id, rows);
   }
   const activeEmployeeIds = new Set(openSessions.map((session) => session.record.employeeId));
-  const summaries = employees.map((employee) => {
+  const summaries = employeesWithRecords.map((employee) => {
     const grouped = groupSessionsByEmployeeLocalDay(sessionsByEmployee.get(employee.id) ?? [], employee.timeZone);
     const day = grouped.days.find((entry) => entry.date === date) ?? { date, sessions: [], totalWorkedMs: 0 };
     return {

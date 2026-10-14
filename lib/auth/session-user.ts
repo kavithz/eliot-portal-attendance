@@ -6,7 +6,11 @@ import { accountIsActive } from "@/lib/auth/account-status";
 
 type SessionUserDatabase = Pick<PrismaClient, "user">;
 
-export async function findActiveSessionUser(userId: string, database: SessionUserDatabase = prisma) {
+export async function findActiveSessionUser(
+  userId: string,
+  database: SessionUserDatabase = prisma,
+  expectedSessionVersion?: number,
+) {
   const user = await database.user.findUnique({
     where: { id: userId },
     select: {
@@ -15,10 +19,22 @@ export async function findActiveSessionUser(userId: string, database: SessionUse
       email: true,
       role: true,
       isActive: true,
+      sessionVersion: true,
       employeeCode: true,
       countryCode: true,
       timeZone: true,
     },
   });
-  return accountIsActive(user) ? user : null;
+  if (!accountIsActive(user) || (expectedSessionVersion !== undefined && user.sessionVersion !== expectedSessionVersion)) return null;
+
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isActive: user.isActive,
+    employeeCode: user.employeeCode,
+    countryCode: user.countryCode,
+    timeZone: user.timeZone,
+  };
 }
