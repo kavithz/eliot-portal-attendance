@@ -5,6 +5,10 @@ import { describe, it } from "node:test";
 import { buildMonthlyEmployeeReport, createNotification, getSettingsSnapshot } from "./qa-fixes";
 
 describe("attendance QA implementation helpers", () => {
+  it("uses the approved company name when no stored setting is available", () => {
+    assert.equal(getSettingsSnapshot().companyName, "Emmanuel's Lanka Pvt Ltd");
+  });
+
   it("groups employee records by local month and keeps empty months explicit", () => {
     const report = buildMonthlyEmployeeReport({
       id: "employee-1",
@@ -45,14 +49,14 @@ describe("attendance QA implementation helpers", () => {
 
   it("keeps default settings consistent and validates timezone values", () => {
     const settings = getSettingsSnapshot({
-      companyName: "ELIoT",
+      companyName: "Emmanuel's Lanka Pvt Ltd",
       attendanceStart: "08:30",
       attendanceEnd: "17:30",
       defaultTimeZone: "Asia/Colombo",
       supportedTimeZones: ["Asia/Colombo", "Asia/Dhaka"],
     });
 
-    assert.equal(settings.companyName, "ELIoT");
+    assert.equal(settings.companyName, "Emmanuel's Lanka Pvt Ltd");
     assert.equal(settings.attendanceSchedule.start, "08:30");
     assert.equal(settings.attendanceSchedule.end, "17:30");
     assert.equal(settings.defaultTimeZone, "Asia/Colombo");
