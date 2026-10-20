@@ -4,6 +4,8 @@ export type Permission =
   | "employee:manage"
   | "employee:records:read"
   | "attendance:manage"
+  | "attendance:locations:read"
+  | "audit:read"
   | "attendance:department:read"
   | "attendance:assigned:read"
   | "attendance:monitor"
@@ -43,6 +45,8 @@ const rolePermissions: Record<Exclude<Role, "ADMIN">, readonly Permission[]> = {
     "employee:manage",
     "employee:records:read",
     "attendance:manage",
+    "attendance:locations:read",
+    "audit:read",
     "attendance:correction:manage",
     "attendance:correction:approve",
     "leave:manage",
