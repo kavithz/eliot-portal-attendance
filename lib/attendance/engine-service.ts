@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { fromZonedTime } from "date-fns-tz";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import {
   attendanceDailyWorkingHoursForStorage,
@@ -50,6 +51,38 @@ const shiftConfigurationSelect = {
 } satisfies Prisma.ShiftSelect;
 
 type EngineTransaction = Prisma.TransactionClient;
+
+const approvedCorrectionValuesSchema = z.object({
+  firstIn: z.string().datetime({ offset: true }).nullable().optional(),
+  lastOut: z.string().datetime({ offset: true }).nullable().optional(),
+  requestedMode: z.enum(["OFFICE", "WFH"]).optional(),
+}).strict();
+
+async function loadApprovedCorrectionValues(
+  transaction: EngineTransaction,
+  dailyAttendanceId: string,
+): Promise<DailyAttendanceCorrectionValues> {
+  const requests = await transaction.attendanceCorrectionRequest.findMany({
+    where: { dailyAttendanceId, status: "APPROVED" },
+    select: { requestedValues: true },
+    orderBy: [{ resolvedAt: "asc" }, { requestedAt: "asc" }, { id: "asc" }],
+  });
+
+  const correction: DailyAttendanceCorrectionValues = {};
+  for (const request of requests) {
+    const result = approvedCorrectionValuesSchema.safeParse(request.requestedValues);
+    if (!result.success) {
+      throw new AttendanceDailyPersistenceError("An approved attendance correction contains invalid values.");
+    }
+    if (result.data.firstIn !== undefined) {
+      correction.firstIn = result.data.firstIn === null ? null : new Date(result.data.firstIn);
+    }
+    if (result.data.lastOut !== undefined) {
+      correction.lastOut = result.data.lastOut === null ? null : new Date(result.data.lastOut);
+    }
+  }
+  return correction;
+}
 
 async function calculateForEmployeeDay(
   transaction: EngineTransaction,
@@ -163,9 +196,9 @@ export async function calculateAndPersistDailyAttendance(
 ) {
   return database.$transaction(async (transaction) => {
     await transaction.$queryRaw`SELECT "id" FROM "Employee" WHERE "id" = ${employeeId} FOR UPDATE`;
-    const calculated = await calculateForEmployeeDay(transaction, employeeId, date);
+    const dateValue = new Date(`${date}T00:00:00.000Z`);
     const existing = await transaction.attendanceDaily.findMany({
-      where: { employeeId, date: calculated.dateValue },
+      where: { employeeId, date: dateValue },
       select: { id: true },
       take: 2,
     });
@@ -173,6 +206,10 @@ export async function calculateAndPersistDailyAttendance(
       throw new AttendanceDailyPersistenceError("Multiple daily attendance rows exist for this employee and date.");
     }
 
+    const approvedCorrection = existing[0]
+      ? await loadApprovedCorrectionValues(transaction, existing[0].id)
+      : undefined;
+    const calculated = await calculateForEmployeeDay(transaction, employeeId, date, approvedCorrection);
     const attendanceDaily = existing[0]
       ? await transaction.attendanceDaily.update({ where: { id: existing[0].id }, data: calculated.data })
       : await transaction.attendanceDaily.create({ data: calculated.data });
@@ -184,7 +221,7 @@ export async function calculateAndPersistDailyAttendance(
 export async function applyApprovedAttendanceCorrection(
   transaction: EngineTransaction,
   input: {
-    dailyAttendanceId: string;
+    dailyAttendanceId: string | null;
     employeeId: string;
     date: string;
     expectedFirstIn: Date | null;
@@ -193,25 +230,42 @@ export async function applyApprovedAttendanceCorrection(
   },
 ) {
   await transaction.$queryRaw`SELECT "id" FROM "Employee" WHERE "id" = ${input.employeeId} FOR UPDATE`;
-  const current = await transaction.attendanceDaily.findUnique({
-    where: { id: input.dailyAttendanceId },
-    select: { id: true, employeeId: true, date: true, firstIn: true, lastOut: true },
-  });
+  const dateValue = new Date(`${input.date}T00:00:00.000Z`);
+  const current = input.dailyAttendanceId
+    ? await transaction.attendanceDaily.findUnique({
+        where: { id: input.dailyAttendanceId },
+        select: { id: true, employeeId: true, date: true, firstIn: true, lastOut: true },
+      })
+    : null;
   if (
-    !current
-    || current.employeeId !== input.employeeId
-    || current.date.toISOString().slice(0, 10) !== input.date
-    || current.firstIn?.getTime() !== input.expectedFirstIn?.getTime()
-    || current.lastOut?.getTime() !== input.expectedLastOut?.getTime()
+    (input.dailyAttendanceId !== null && !current)
+    || (current !== null && (
+      current.employeeId !== input.employeeId
+      || current.date.toISOString().slice(0, 10) !== input.date
+      || current.firstIn?.getTime() !== input.expectedFirstIn?.getTime()
+      || current.lastOut?.getTime() !== input.expectedLastOut?.getTime()
+    ))
   ) {
     throw new AttendanceCorrectionEngineConflictError();
   }
 
+  const existingRows = input.dailyAttendanceId === null
+    ? await transaction.attendanceDaily.findMany({
+        where: { employeeId: input.employeeId, date: dateValue },
+        select: { id: true },
+        take: 2,
+      })
+    : [];
+  if (existingRows.length > 0) throw new AttendanceCorrectionEngineConflictError();
+
+  const approvedCorrection = current
+    ? await loadApprovedCorrectionValues(transaction, current.id)
+    : {};
   const calculated = await calculateForEmployeeDay(
     transaction,
     input.employeeId,
     input.date,
-    input.correction,
+    { ...approvedCorrection, ...input.correction },
   );
   if (
     (input.correction.firstIn !== undefined
@@ -222,15 +276,23 @@ export async function applyApprovedAttendanceCorrection(
     throw new AttendanceCorrectionEngineConflictError();
   }
 
-  const updated = await transaction.attendanceDaily.updateMany({
-    where: {
-      id: input.dailyAttendanceId,
-      employeeId: input.employeeId,
-      firstIn: current.firstIn,
-      lastOut: current.lastOut,
-    },
-    data: calculated.data,
-  });
-  if (updated.count !== 1) throw new AttendanceCorrectionEngineConflictError();
-  return calculated.calculation;
+  const attendanceDaily = current
+    ? await transaction.attendanceDaily.updateMany({
+        where: {
+          id: current.id,
+          employeeId: input.employeeId,
+          firstIn: current.firstIn,
+          lastOut: current.lastOut,
+        },
+        data: calculated.data,
+      }).then(async (updated) => {
+        if (updated.count !== 1) throw new AttendanceCorrectionEngineConflictError();
+        return transaction.attendanceDaily.findUnique({
+          where: { id: current.id },
+          select: { id: true },
+        });
+      })
+    : await transaction.attendanceDaily.create({ data: calculated.data, select: { id: true } });
+  if (!attendanceDaily) throw new AttendanceCorrectionEngineConflictError();
+  return { calculation: calculated.calculation, attendanceDaily };
 }
