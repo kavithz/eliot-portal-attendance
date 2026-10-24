@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getEmployeeLocalDayWindow } from "@/lib/attendance/timezone";
 import { groupSessionsByEmployeeLocalDay } from "@/lib/attendance/history";
 import { lockAttendanceEmployee } from "@/lib/attendance/service";
+import { calculateAndPersistDailyAttendanceInTransaction } from "@/lib/attendance/engine-service";
 import { resolveAttendanceEmployees } from "@/lib/attendance/employee-link";
 import { lockEmployeeForApproval, getActiveManagerDepartmentScope, lockActiveManagerDepartmentScope } from "@/lib/organization/manager-scope";
 import { adminAttendanceCorrectionSchema, adminAttendanceFilterSchema, type AdminAttendanceFilters } from "@/lib/attendance/admin-validation";
@@ -14,7 +15,7 @@ import { adminAttendanceCorrectionSchema, adminAttendanceFilterSchema, type Admi
 type AdminActor = { id?: string; role: Role } | null;
 type AdminAttendanceReader = Pick<PrismaClient, "user" | "employee" | "workSession">;
 type AdminAttendanceDatabase = AdminAttendanceReader & Pick<PrismaClient, "$transaction">;
-type AdminAttendanceWriteDatabase = AdminAttendanceDatabase & Pick<PrismaClient, "$transaction">;
+type AdminAttendanceWriteDatabase = AdminAttendanceDatabase & Pick<PrismaClient, "$transaction" | "attendanceRaw">;
 
 export const adminEmployeeSelect = {
   id: true,
@@ -289,20 +290,39 @@ export async function correctAdminAttendance(
       }
     }
 
-    const oldLocalDate = formatInTimeZone(current.startAt, current.record.employee.timeZone, "yyyy-MM-dd");
-    const newLocalDate = formatInTimeZone(startAt, current.record.employee.timeZone, "yyyy-MM-dd");
-    if (oldLocalDate !== newLocalDate) {
-      const targetDay = getEmployeeLocalDayWindow(startAt, current.record.employee.timeZone);
-      const conflictingSession = await transaction.workSession.findFirst({
+    const timeZone = current.record.employee.timeZone;
+    const endpointDates = (session: { startAt: Date; endAt: Date | null }) => [
+      formatInTimeZone(session.startAt, timeZone, "yyyy-MM-dd"),
+      ...(session.endAt ? [formatInTimeZone(session.endAt, timeZone, "yyyy-MM-dd")] : []),
+    ];
+    const updatedEndpoints = { startAt, endAt };
+    const oldStartDate = endpointDates(current)[0];
+    const oldEndDate = current.endAt ? endpointDates(current)[1] : undefined;
+    const newStartDate = endpointDates(updatedEndpoints)[0];
+    const newEndDate = endAt ? endpointDates(updatedEndpoints)[1] : undefined;
+    const datesToRecalculate = [...new Set([
+      ...endpointDates(current),
+      ...endpointDates(updatedEndpoints),
+    ])].sort();
+    const displacedEndpointDates = new Set([
+      ...(oldStartDate !== newStartDate ? [oldStartDate] : []),
+      ...(oldEndDate && oldEndDate !== newEndDate ? [oldEndDate] : []),
+    ]);
+    for (const date of displacedEndpointDates) {
+      if (!targetEmployeeRecordId) break;
+      const oldDay = getEmployeeLocalDayWindow(fromZonedTime(`${date}T12:00:00.000`, timeZone), timeZone);
+      const rawEvidence = await transaction.attendanceRaw.findMany({
         where: {
-          id: { not: sessionId },
-          record: { employeeId },
-          startAt: { gte: targetDay.startAt, lt: targetDay.endAt },
+          employeeId: targetEmployeeRecordId,
+          timestamp: { gte: oldDay.startAt, lt: oldDay.endAt },
         },
         select: { id: true },
+        take: 1,
       });
-      if (conflictingSession) {
-        throw new AdminAttendanceCorrectionError("Another attendance session already exists on that employee-local day.");
+      if (rawEvidence.length > 0) {
+        throw new AdminAttendanceCorrectionError(
+          "This correction cannot move an effective endpoint to another employee-local date while raw punch evidence exists on the original date.",
+        );
       }
     }
 
@@ -345,6 +365,11 @@ export async function correctAdminAttendance(
       },
       select: { id: true, employeeId: true, sessionId: true, actorId: true, actionType: true, previousValues: true, newValues: true, reason: true, createdAt: true },
     });
+    if (targetEmployeeRecordId) {
+      for (const date of datesToRecalculate) {
+        await calculateAndPersistDailyAttendanceInTransaction(transaction, targetEmployeeRecordId, date);
+      }
+    }
     return updated;
   });
 }
