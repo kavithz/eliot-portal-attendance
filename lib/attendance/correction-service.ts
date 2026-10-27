@@ -8,10 +8,11 @@ import {
   type Role,
 } from "@prisma/client";
 import { z } from "zod";
-import { fromZonedTime } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { canSubmitOwnAttendanceCorrection, hasPermission } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { getEmployeeLocalDayWindow } from "@/lib/attendance/timezone";
+import { findConflictingRawPunchOnMovedEndpoint } from "@/lib/attendance/correction-raw-evidence";
 import {
   getActiveManagerDepartmentScope,
   lockActiveManagerDepartmentScope,
@@ -156,7 +157,7 @@ export class DailyAttendanceCorrectionPendingRequestExistsError extends Error {
 
 export class DailyAttendanceCorrectionSelfApprovalError extends Error {
   constructor() {
-    super("You cannot approve an attendance correction for your own account.");
+    super("You cannot review your own attendance correction at this stage.");
     this.name = "DailyAttendanceCorrectionSelfApprovalError";
   }
 }
@@ -308,18 +309,20 @@ export async function submitAttendanceDateCorrection(
         "An attendance record for this date contains conflicting sessions; an administrator must resolve it before correction.",
       );
     }
+    const originalStart = session?.startAt
+      ?? dailyAttendance?.firstIn
+      ?? rawPunches.find((punch) => punch.punchType === "IN")?.timestamp
+      ?? null;
+    const originalEnd = session?.endAt
+      ?? dailyAttendance?.lastOut
+      ?? [...rawPunches].reverse().find((punch) => punch.punchType === "OUT")?.timestamp
+      ?? null;
     const effectiveStart = parsed.requestedValues.firstIn
       ? new Date(parsed.requestedValues.firstIn)
-      : session?.startAt
-        ?? dailyAttendance?.firstIn
-        ?? rawPunches.find((punch) => punch.punchType === "IN")?.timestamp
-        ?? null;
+      : originalStart;
     const effectiveEnd = parsed.requestedValues.lastOut
       ? new Date(parsed.requestedValues.lastOut)
-      : session?.endAt
-        ?? dailyAttendance?.lastOut
-        ?? [...rawPunches].reverse().find((punch) => punch.punchType === "OUT")?.timestamp
-        ?? null;
+      : originalEnd;
     if (!session && !effectiveStart) {
       throw new DailyAttendanceCorrectionInvalidValuesError(
         "A corrected start time or existing IN punch is required when no attendance session exists.",
@@ -327,6 +330,15 @@ export async function submitAttendanceDateCorrection(
     }
     if (effectiveStart && effectiveEnd && effectiveStart >= effectiveEnd) {
       throw new DailyAttendanceCorrectionInvalidValuesError("The attendance start time must be before the end time.");
+    }
+    const rawPunchConflict = await findConflictingRawPunchOnMovedEndpoint(transaction, employee.id, requester.timeZone, [
+      { label: "IN", previous: originalStart, next: effectiveStart },
+      { label: "OUT", previous: originalEnd, next: effectiveEnd },
+    ]);
+    if (rawPunchConflict) {
+      throw new DailyAttendanceCorrectionInvalidValuesError(
+        `The corrected ${rawPunchConflict.label} conflicts with another raw punch on ${rawPunchConflict.date}. Resolve the conflicting punch evidence before requesting this correction.`,
+      );
     }
     if (
       session
@@ -621,6 +633,7 @@ export async function submitDailyAttendanceCorrection(
           select: {
             id: true,
             userId: true,
+            user: { select: { timeZone: true } },
             supervisor: {
               select: {
                 userId: true,
@@ -633,6 +646,23 @@ export async function submitDailyAttendanceCorrection(
     });
     if (!attendance) throw new DailyAttendanceCorrectionTargetNotFoundError();
     if (!attendance.employee.userId) throw new DailyAttendanceCorrectionSubjectUserNotFoundError();
+    const timeZone = attendance.employee.user?.timeZone;
+    if (!timeZone) {
+      throw new DailyAttendanceCorrectionInvalidValuesError(
+        "The employee timezone is unavailable; an administrator must resolve the attendance record before correction.",
+      );
+    }
+    const attendanceDate = attendance.date.toISOString().slice(0, 10);
+    for (const timestamp of [parsed.requestedValues.firstIn, parsed.requestedValues.lastOut]) {
+      if (
+        timestamp
+        && formatInTimeZone(new Date(timestamp), timeZone, "yyyy-MM-dd") !== attendanceDate
+      ) {
+        throw new DailyAttendanceCorrectionInvalidValuesError(
+          "This correction changes the employee-local attendance date. Use the date-based correction form above and select the corrected date.",
+        );
+      }
+    }
     if (
       (actor.role === "EMPLOYEE" || actor.role === "HR_ADMINISTRATOR")
       && attendance.employee.userId !== actor.id
@@ -1097,6 +1127,38 @@ async function loadAttendanceDateState(
                 }
               : null,
           }, state, input.requestedDateValues);
+          const currentFirstIn = state.session?.startAt
+            ?? state.daily?.firstIn
+            ?? state.punches.find((punch) => punch.punchType === "IN")?.timestamp
+            ?? null;
+          const currentLastOut = state.session?.endAt
+            ?? state.daily?.lastOut
+            ?? [...state.punches].reverse().find((punch) => punch.punchType === "OUT")?.timestamp
+            ?? null;
+          const rawPunchConflict = await findConflictingRawPunchOnMovedEndpoint(
+            transaction,
+            input.employeeRecordId,
+            input.timeZone,
+            [
+              {
+                label: "IN",
+                previous: currentFirstIn,
+                next: input.requestedDateValues.firstIn !== undefined
+                  ? input.requestedDateValues.firstIn ? new Date(input.requestedDateValues.firstIn) : null
+                  : currentFirstIn,
+              },
+              {
+                label: "OUT",
+                previous: currentLastOut,
+                next: input.requestedDateValues.lastOut !== undefined
+                  ? input.requestedDateValues.lastOut ? new Date(input.requestedDateValues.lastOut) : null
+                  : currentLastOut,
+              },
+            ],
+          );
+          if (rawPunchConflict) {
+            throw new DailyAttendanceCorrectionConflictError();
+          }
           if (input.requested.firstIn === null || input.requested.lastOut === null) {
             throw new DailyAttendanceCorrectionConflictError();
           }
@@ -1497,7 +1559,15 @@ export async function decideDailyAttendanceCorrection(
       throw new DailyAttendanceCorrectionReviewerScopeError();
     }
 
-    if (correction.employeeId === actor.id || correction.requesterId === actor.id) {
+    const isHrSelfApproval = actor.role === "HR_ADMINISTRATOR"
+      && correction.employeeId === actor.id
+      && correction.requesterId === actor.id
+      && correction.currentApprovalStage === AttendanceCorrectionApprovalStage.HR
+      && decision.action === "APPROVE";
+    if (
+      (correction.employeeId === actor.id || correction.requesterId === actor.id)
+      && !isHrSelfApproval
+    ) {
       throw new DailyAttendanceCorrectionSelfApprovalError();
     }
     if (

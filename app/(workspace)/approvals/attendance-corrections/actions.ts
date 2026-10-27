@@ -7,6 +7,7 @@ import { hasPermission } from "@/lib/auth/permissions";
 import {
   DailyAttendanceCorrectionAccessError,
   DailyAttendanceCorrectionConflictError,
+  DailyAttendanceCorrectionInvalidValuesError,
   DailyAttendanceCorrectionReviewerScopeError,
   DailyAttendanceCorrectionSelfApprovalError,
   DailyAttendanceCorrectionStageError,
@@ -37,6 +38,11 @@ export async function decideAttendanceCorrectionAction(
     revalidatePath("/dashboard");
     revalidatePath("/attendance");
     revalidatePath("/attendance/corrections");
+    revalidatePath("/admin/attendance");
+    revalidatePath("/admin/attendance/daily");
+    revalidatePath("/admin/reports");
+    revalidatePath("/reports");
+    revalidatePath("/reports/monthly");
     return {
       success: result.status === "PENDING"
         ? "Correction advanced to HR review."
@@ -47,6 +53,7 @@ export async function decideAttendanceCorrectionAction(
     if (
       error instanceof DailyAttendanceCorrectionAccessError
       || error instanceof DailyAttendanceCorrectionConflictError
+      || error instanceof DailyAttendanceCorrectionInvalidValuesError
       || error instanceof DailyAttendanceCorrectionReviewerScopeError
       || error instanceof DailyAttendanceCorrectionSelfApprovalError
       || error instanceof DailyAttendanceCorrectionStageError
