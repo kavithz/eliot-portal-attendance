@@ -74,6 +74,7 @@ function createHarness(
       attendanceRaw: {
         findMany: async () => raw,
       },
+      leaveRequest: { findMany: async () => [] },
       workSession: {
         findMany: async () => effectiveSessions ?? (raw.length > 0 ? [{
           id: "session-1",
@@ -127,6 +128,36 @@ function createHarness(
 }
 
 describe("attendance engine persistence boundary", () => {
+  it("derives a shared monthly allowance count from prior effective session starts", async () => {
+    const effectiveSessions = [
+      { id: "monday", mode: "OFFICE" as const, startAt: new Date("2026-06-15T03:05:00.000Z"), endAt: null },
+      { id: "tuesday", mode: "WFH" as const, startAt: new Date("2026-06-16T03:05:00.000Z"), endAt: null },
+      { id: "wednesday", mode: "OFFICE" as const, startAt: new Date("2026-06-17T03:05:00.000Z"), endAt: new Date("2026-06-17T12:00:00.000Z") },
+    ];
+    const raw = [
+      { id: "wednesday-in", timestamp: effectiveSessions[2].startAt, punchType: "IN" as const },
+      { id: "wednesday-out", timestamp: effectiveSessions[2].endAt!, punchType: "OUT" as const },
+    ];
+    const harness = createHarness(
+      raw,
+      {
+        startTime: new Date("1970-01-01T08:00:00.000Z"),
+        gracePeriodMinutes: 41,
+      },
+      false,
+      false,
+      [],
+      "OFFICE",
+      effectiveSessions,
+    );
+
+    const result = await calculateAndPersistDailyAttendance("employee-1", "2026-06-17", harness.database);
+
+    assert.equal(result.calculation.lateMinutes, 5);
+    assert.equal(result.calculation.status, "LATE");
+    assert.deepEqual(harness.raw.map(({ id, timestamp, punchType }) => [id, timestamp.toISOString(), punchType]), harness.rawBefore);
+  });
+
   it("reads raw punches and writes only the separate daily result", async () => {
     const raw = [
       { id: "punch-in", timestamp: new Date("2026-06-15T03:00:00.000Z"), punchType: "IN" },
@@ -160,6 +191,7 @@ describe("attendance engine persistence boundary", () => {
         attendanceRaw: {
           findMany: async () => raw,
         },
+        leaveRequest: { findMany: async () => [] },
         attendanceDaily: {
           findMany: async () => [],
           create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -217,6 +249,7 @@ describe("attendance engine persistence boundary", () => {
           }),
         },
         attendanceRaw: { findMany: async () => raw },
+        leaveRequest: { findMany: async () => [] },
         attendanceDaily: {
           findMany: async () => [{ id: "daily-existing" }],
           create: async () => {
